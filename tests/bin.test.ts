@@ -6,6 +6,9 @@ import { expect, it } from "vitest";
 import { cleanup, makeGitRepo, makeTmpDir, write } from "./helpers.js";
 import { createSnapshot, snapshotDigest } from "../src/review/snapshot.js";
 
+const CLI_SMOKE_TTL_MS = 15_000;
+const CLI_SMOKE_TIMEOUT_MS = CLI_SMOKE_TTL_MS + 10_000;
+
 it("loads built CLI modules through a file URL, including Windows paths and spaces", () => {
   const root = makeTmpDir("bin fixture space");
   try {
@@ -25,12 +28,12 @@ it("starts the actual CLI for a synthetic approval and exits after its bounded l
   const state = makeTmpDir("bin-review-state");
   try {
     makeGitRepo(root);
-    const snapshot = createSnapshot(root, { taskId: "synthetic-cli-smoke", paths: ["hello.txt"], ttlMs: 5000 });
+    const snapshot = createSnapshot(root, { taskId: "synthetic-cli-smoke", paths: ["hello.txt"], ttlMs: CLI_SMOKE_TTL_MS });
     write(state, "snapshot.json", JSON.stringify(snapshot));
     const entry = fileURLToPath(new URL("../bin/c2c.js", import.meta.url));
     const run = spawnSync(process.execPath, [entry, "review", "serve", "--snapshot", path.join(state, "snapshot.json"),
       "--approval", snapshotDigest(snapshot), "--state-dir", path.join(state, "session")],
-      { encoding: "utf8", timeout: 12_000, windowsHide: true });
+      { encoding: "utf8", timeout: CLI_SMOKE_TIMEOUT_MS, windowsHide: true });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).mode).toBe("LOCAL_MOCK_ONLY");

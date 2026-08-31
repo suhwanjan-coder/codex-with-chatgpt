@@ -10,12 +10,79 @@ import { ensurePrivateDirectory, writePrivateNewFile } from "../dist/review/priv
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const driver = path.join(root, "scripts", "verify-g7-windows.mjs");
 const helper = path.join(root, "scripts", "g7-windows-helper.ps1");
-const bundledNode = "C:\\Users\\suhwa\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe";
+const windowsPowerShell = path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+const helperTransportTimeoutMs = 5_000;
 const fingerprintFiles = ["scripts/verify-g7-windows.mjs", "scripts/g7-windows-helper.ps1", "src/review/private-storage.ts", "src/review/session.ts", "src/review/snapshot.ts", "src/auth/store.ts", "dist/review/private-storage.js", "dist/review/session.js", "dist/review/snapshot.js", "dist/auth/store.js"];
 const owned: string[] = [];
 const hash = (file: string) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
 
 afterEach(() => { while (owned.length) fs.rmSync(owned.pop()!, { recursive: true, force: true }); });
+
+type PowerShellTransportResult = {
+  status: number | null;
+  signal: NodeJS.Signals | null;
+  error?: Error & { code?: string };
+  stdout?: string | Buffer | null;
+  stderr?: string | Buffer | null;
+};
+
+function outputText(value: string | Buffer | null | undefined) {
+  return value == null ? "" : typeof value === "string" ? value : value.toString("utf8");
+}
+
+function nativeFixtureNames(tooling = path.join(root, ".tooling")) {
+  try {
+    return fs.readdirSync(tooling, { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith("g7-native-")).map((entry) => entry.name).sort();
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+    throw error;
+  }
+}
+
+function runPowerShellFile(script: string, env: NodeJS.ProcessEnv, timeout = helperTransportTimeoutMs) {
+  const tooling = path.join(root, ".tooling");
+  fs.mkdirSync(tooling, { recursive: true });
+  const transportDir = fs.mkdtempSync(path.join(tooling, "g7-helper-extraction-"));
+  owned.push(transportDir);
+  const transport = path.join(transportDir, "extract.ps1");
+  // The extraction program is ASCII so Windows PowerShell 5.1 never needs to infer its encoding.
+  fs.writeFileSync(transport, script, "ascii");
+  return spawnSync(windowsPowerShell, ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", transport], {
+    cwd: root,
+    encoding: "utf8",
+    windowsHide: true,
+    env,
+    timeout,
+  });
+}
+
+function helperTransportDiagnostic(result: PowerShellTransportResult, label: string) {
+  const error = result.error;
+  return [
+    `helper transport: ${label}`,
+    `powershell=${windowsPowerShell}`,
+    `status=${result.status}`,
+    `signal=${result.signal ?? "none"}`,
+    `error=${error ? `${error.code ?? "unknown"}:${error.message}` : "none"}`,
+    `stdoutBytes=${Buffer.byteLength(outputText(result.stdout))}`,
+    `stderr=${JSON.stringify(outputText(result.stderr))}`,
+  ].join("; ");
+}
+
+function expectHelperSuccess(result: PowerShellTransportResult, label: string) {
+  const diagnostic = helperTransportDiagnostic(result, label);
+  expect(result.status, diagnostic).toBe(0);
+  expect(result.signal, diagnostic).toBeNull();
+  expect(result.error, diagnostic).toBeUndefined();
+}
+
+function expectHelperOutput(result: PowerShellTransportResult, label: string) {
+  expectHelperSuccess(result, label);
+  const diagnostic = helperTransportDiagnostic(result, label);
+  const stdout = outputText(result.stdout);
+  expect(stdout, diagnostic).not.toBe("");
+  return stdout;
+}
 
 /**
  * The elevated helper has top-level account and ACL work.  Contract tests load
@@ -37,12 +104,7 @@ foreach ($name in ($env:G7_FUNCTIONS -split ',')) {
 }
 & ([scriptblock]::Create($env:G7_PROBE))
 `;
-  return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", extraction], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-    env: { ...process.env, ...env, G7_HELPER: helper, G7_FUNCTIONS: functionNames.join(","), G7_PROBE: probe },
-  });
+  return runPowerShellFile(extraction, { ...process.env, ...env, G7_HELPER: helper, G7_FUNCTIONS: functionNames.join(","), G7_PROBE: probe });
 }
 
 function runHelperReturnExpression(functionName: string, probe: string, env: NodeJS.ProcessEnv = {}) {
@@ -57,12 +119,7 @@ if ($returns.Count -ne 1) { throw "unexpected return count: $($returns.Count)" }
 $expression = $returns[0].Pipeline.Extent.Text
 & ([scriptblock]::Create($env:G7_PROBE))
 `;
-  return spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", extraction], {
-    cwd: root,
-    encoding: "utf8",
-    windowsHide: true,
-    env: { ...process.env, ...env, G7_HELPER: helper, G7_FUNCTION: functionName, G7_PROBE: probe },
-  });
+  return runPowerShellFile(extraction, { ...process.env, ...env, G7_HELPER: helper, G7_FUNCTION: functionName, G7_PROBE: probe });
 }
 
 function fixture() {
@@ -129,14 +186,34 @@ function runHelper(manifest: string, ...args: string[]) {
 
 describe("G7 Windows driver boundaries", () => {
   it("has a side-effect-free import and a no-argument scope error", () => {
-    const before = fs.readdirSync(path.join(root, ".tooling"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith("g7-native-")).map((entry) => entry.name).sort();
-    const imported = spawnSync(bundledNode, ["-e", `import(${JSON.stringify(pathToFileURL(driver).href)})`], { cwd: root, encoding: "utf8", windowsHide: true });
+    const before = nativeFixtureNames();
+    const imported = spawnSync(process.execPath, ["-e", `import(${JSON.stringify(pathToFileURL(driver).href)})`], { cwd: root, encoding: "utf8", windowsHide: true });
     expect(imported.status).toBe(0);
-    const result = spawnSync(bundledNode, [driver], { cwd: root, encoding: "utf8", windowsHide: true });
+    const result = spawnSync(process.execPath, [driver], { cwd: root, encoding: "utf8", windowsHide: true });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain("--authorize-elevated-fixtures");
-    const after = fs.readdirSync(path.join(root, ".tooling"), { withFileTypes: true }).filter((entry) => entry.isDirectory() && entry.name.startsWith("g7-native-")).map((entry) => entry.name).sort();
+    const after = nativeFixtureNames();
     expect(after).toEqual(before);
+  });
+
+  it("treats an isolated absent tooling directory as an empty native-fixture list", () => {
+    const isolated = fs.mkdtempSync(path.join(root, "_tmp_g7-driver-isolated-"));
+    owned.push(isolated);
+    const absentTooling = path.join(isolated, ".tooling");
+    expect(fs.existsSync(absentTooling)).toBe(false);
+    expect(nativeFixtureNames(absentTooling)).toEqual([]);
+    expect(fs.existsSync(absentTooling)).toBe(false);
+  });
+
+  it("reports empty-success and timed-out PowerShell transport failures", () => {
+    const emptySuccess = runPowerShellFile("$null = $true", process.env);
+    expect(emptySuccess.status).toBe(0);
+    expect(() => expectHelperOutput(emptySuccess, "empty-success regression")).toThrow(/status=0.*stdoutBytes=0/);
+
+    const timedOut = runPowerShellFile("Start-Sleep -Seconds 5", process.env, 250);
+    expect((timedOut.error as NodeJS.ErrnoException | undefined)?.code).toBe("ETIMEDOUT");
+    expect(outputText(timedOut.stdout)).toBe("");
+    expect(() => expectHelperSuccess(timedOut, "timeout regression")).toThrow(/error=ETIMEDOUT:.*stdoutBytes=0/);
   });
 
   it("PowerShell parses and retains one-UAC bounded-helper controls", () => {
@@ -178,8 +255,7 @@ public static class G7Native {
 [Console]::Out.Write((Short-Alias $env:G7_SHORT_SOURCE $env:G7_SHORT_ROOT | ConvertTo-Json -Compress))
 `;
     const shortAlias = runHelperFunctions(["Fail", "Get-ChildRelative", "Is-Child", "Short-Alias"], shortProbe, { G7_SHORT_SOURCE: shortSource, G7_SHORT_ROOT: path.dirname(shortSource) });
-    expect(shortAlias.status).toBe(0);
-    const alias = JSON.parse(shortAlias.stdout);
+    const alias = JSON.parse(expectHelperOutput(shortAlias, "Short-Alias extraction"));
     expect(alias.relative).toContain("~");
     expect(fs.realpathSync.native(alias.path)).toBe(fs.realpathSync.native(shortSource));
     const value = JSON.parse(fs.readFileSync(manifest, "utf8")); value.fingerprints["scripts/g7-windows-helper.ps1"] = "0".repeat(64);
@@ -221,8 +297,7 @@ try { Assert-PlainDirectory $env:G7_DIR $env:G7_OUTSIDE; $outside = 'accepted' }
 [Console]::Out.Write((@{ accepted = $accepted; outside = $outside } | ConvertTo-Json -Compress))
 `;
     const result = runHelperFunctions(["Fail", "Native-Path", "Get-NativeFileAttributes", "Get-ChildRelative", "Is-Child", "Assert-PlainDirectory"], probe, { G7_DIR: dir, G7_OUTSIDE: `${dir}-outside` });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ accepted: dir, outside: "G7_HELPER_ROOT_ESCAPE" });
+    expect(JSON.parse(expectHelperOutput(result, "Assert-PlainDirectory extraction"))).toEqual({ accepted: dir, outside: "G7_HELPER_ROOT_ESCAPE" });
   });
 
   it("hashes a file held open for read/write sharing through the helper's PS5.1 stream contract", () => {
@@ -233,8 +308,7 @@ $writer = [IO.File]::Open($env:G7_FILE, [IO.FileMode]::Open, [IO.FileAccess]::Wr
 try { [Console]::Out.Write((Sha256 $env:G7_FILE)) } finally { $writer.Dispose() }
 `;
     const result = runHelperFunctions(["Native-Path", "Sha256"], probe, { G7_FILE: file });
-    expect(result.status).toBe(0);
-    expect(result.stdout).toBe(createHash("sha256").update(content).digest("hex"));
+    expect(expectHelperOutput(result, "Sha256 extraction")).toBe(createHash("sha256").update(content).digest("hex"));
   });
 
   it("rejects missing and extra properties through the helper's extracted exact-property contract", () => {
@@ -250,8 +324,7 @@ $extra = [pscustomobject]@{ nonce = 'n'; accountName = 'a'; accountSid = 's'; cr
 } | ConvertTo-Json -Compress))
 `;
     const result = runHelperFunctions(["Exact-Properties"], probe);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ valid: true, missing: false, extra: false });
+    expect(JSON.parse(expectHelperOutput(result, "Exact-Properties extraction"))).toEqual({ valid: true, missing: false, extra: false });
   });
 
   it("uses a PS5.1-safe uint32 access mask in the extracted helper reparse reader", () => {
@@ -270,8 +343,7 @@ try { Reparse-Tag 'unused' } catch { [Console]::Out.Write($_.Exception.Message);
 exit 9
 `;
     const result = runHelperFunctions(["Fail", "Reparse-Tag"], probe);
-    expect(result.status).toBe(0);
-    expect(result.stdout).toMatch(/^G7_HELPER_REPARSE_OPEN_\d+$/);
+    expect(expectHelperOutput(result, "Reparse-Tag extraction")).toMatch(/^G7_HELPER_REPARSE_OPEN_\d+$/);
   });
 
   it("validates and hashes a real ADS through the helper's extracted pure contracts", () => {
@@ -299,8 +371,7 @@ catch { $escaped = $_.Exception.Message }
 [Console]::Out.Write((@{ accepted = $accepted; digest = $digest; wrongStream = $wrongStream; escaped = $escaped } | ConvertTo-Json -Compress))
 `;
     const result = runHelperFunctions(["Fail", "Native-Path", "Get-NativeFileAttributes", "Get-ChildRelative", "Is-Child", "Assert-PlainPath", "Assert-PlainAds", "Sha256-Ads"], probe, { G7_PATH_ROOT: dir, G7_BASE: base, G7_ADS: ads });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ accepted: ads, digest: createHash("sha256").update(streamData.slice(0, 1025)).digest("hex"), wrongStream: "G7_HELPER_ADS_STREAM", escaped: "G7_HELPER_ARTIFACT_ESCAPE" });
+    expect(JSON.parse(expectHelperOutput(result, "ADS extraction"))).toEqual({ accepted: ads, digest: createHash("sha256").update(streamData.slice(0, 1025)).digest("hex"), wrongStream: "G7_HELPER_ADS_STREAM", escaped: "G7_HELPER_ARTIFACT_ESCAPE" });
   });
 
   it("runs the independent evidence-reader module string with a PS5.1-safe uint32 access mask", () => {
@@ -321,7 +392,7 @@ catch { $escaped = $_.Exception.Message }
     owned.push(dir);
     const json = path.join(dir, "result.json");
     const writer = runHelperFunctions(["Write-JsonEvidence"], "Write-JsonEvidence $env:G7_JSON ([ordered]@{ ok = $true })", { G7_JSON: json });
-    expect(writer.status).toBe(0);
+    expectHelperSuccess(writer, "Write-JsonEvidence extraction");
     const bytes = fs.readFileSync(json);
     expect([...bytes.subarray(0, 3)]).not.toEqual([0xef, 0xbb, 0xbf]);
     expect(JSON.parse(bytes.toString("utf8"))).toEqual({ ok: true });
@@ -337,8 +408,7 @@ $value = & ([scriptblock]::Create($expression))
 [Console]::Out.Write(($value | ConvertTo-Json -Compress))
 `;
     const result = runHelperReturnExpression("Create-LxFifo", probe, { G7_REPARSE_PATH: outputPath });
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ path: outputPath, tag: 0x80000024, attributes: 0x400, isSymbolicLink: false, isJunction: false });
+    expect(JSON.parse(expectHelperOutput(result, "Create-LxFifo return extraction"))).toEqual({ path: outputPath, tag: 0x80000024, attributes: 0x400, isSymbolicLink: false, isJunction: false });
   });
 
   it("bounds the fixture account name to 19 characters and rejects malformed nonces without account work", () => {
@@ -349,8 +419,7 @@ try { Fixture-UserName ('a' * 31); $invalidLength = 'accepted' } catch { $invali
 [Console]::Out.Write((@{ valid = $valid; length = $valid.Length; invalidAlphabet = $invalidAlphabet; invalidLength = $invalidLength } | ConvertTo-Json -Compress))
 `;
     const result = runHelperFunctions(["Fail", "Fixture-UserName"], probe);
-    expect(result.status).toBe(0);
-    expect(JSON.parse(result.stdout)).toEqual({ valid: `g7n${"a".repeat(16)}`, length: 19, invalidAlphabet: "G7_HELPER_ACCOUNT_NONCE", invalidLength: "G7_HELPER_ACCOUNT_NONCE" });
+    expect(JSON.parse(expectHelperOutput(result, "Fixture-UserName extraction"))).toEqual({ valid: `g7n${"a".repeat(16)}`, length: 19, invalidAlphabet: "G7_HELPER_ACCOUNT_NONCE", invalidLength: "G7_HELPER_ACCOUNT_NONCE" });
   });
 
   it.each([
