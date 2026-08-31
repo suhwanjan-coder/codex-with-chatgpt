@@ -1,6 +1,5 @@
 import ignore, { type Ignore } from "ignore";
-import fs from "node:fs";
-import path from "node:path";
+import { readWorkspaceConfigText } from "./config.js";
 
 /**
  * Files that must never be readable through MCP, regardless of user config.
@@ -81,11 +80,9 @@ export class IgnoreRules {
     this.sensitive = ignore().add(SENSITIVE_PATTERNS);
     this.noise = ignore().add(NOISE_PATTERNS);
     this.custom = ignore();
-    const c2cignore = path.join(workspaceRoot, ".c2cignore");
     try {
-      if (fs.existsSync(c2cignore)) {
-        this.custom.add(fs.readFileSync(c2cignore, "utf8"));
-      }
+      const custom = readWorkspaceConfigText(workspaceRoot, ".c2cignore");
+      if (custom !== undefined) this.custom.add(custom);
     } catch {
       // unreadable .c2cignore: fall back to defaults only
     }

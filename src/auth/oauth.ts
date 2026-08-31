@@ -11,6 +11,27 @@ export interface OAuthDeps {
   workspaceName: string;
   getBaseUrl: (req: Request) => string;
   logger: Logger;
+  review?: ReviewOAuthOptions;
+}
+
+/**
+ * Review OAuth remains loopback-only unless the caller explicitly supplies a
+ * canonical remote destination. The bridge does not enable this capability yet.
+ */
+export interface ReviewOAuthOptions {
+  isActive(): boolean;
+  expiresAt: number;
+  remote?: {
+    issuer: string;
+    resource: string;
+    allowedRedirectUris: readonly string[];
+  };
+}
+
+interface RemoteReviewOAuthOptions {
+  issuer: string;
+  resource: string;
+  allowedRedirectUris: readonly string[];
 }
 
 interface PendingAuthRequest {
@@ -24,13 +45,21 @@ interface PendingAuthRequest {
   expiresAt: number;
 }
 
-function isAllowedRedirectUri(uri: string): boolean {
+function parseRedirectUri(uri: string): URL | null {
+  if (uri.includes("*")) return null;
   let parsed: URL;
   try {
     parsed = new URL(uri);
   } catch {
-    return false;
+    return null;
   }
+  if (parsed.username || parsed.password || parsed.hash || parsed.href !== uri) return null;
+  return parsed;
+}
+
+function isAllowedRedirectUri(uri: string): boolean {
+  const parsed = parseRedirectUri(uri);
+  if (!parsed) return false;
   if (parsed.protocol === "https:") return true;
   if (parsed.protocol === "http:" && (parsed.hostname === "localhost" || parsed.hostname === "127.0.0.1")) {
     return true;
@@ -38,26 +67,60 @@ function isAllowedRedirectUri(uri: string): boolean {
   return false;
 }
 
-function authorizationServerMetadata(base: string): Record<string, unknown> {
+function canonicalHttpsUrl(value: string, name: string): string {
+  if (typeof value !== "string" || value.includes("*")) throw new Error(`INVALID_REMOTE_REVIEW_${name}`);
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`INVALID_REMOTE_REVIEW_${name}`);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.href !== value) {
+    throw new Error(`INVALID_REMOTE_REVIEW_${name}`);
+  }
+  return value;
+}
+
+function resolveRemoteReview(review: ReviewOAuthOptions | undefined): RemoteReviewOAuthOptions | undefined {
+  if (!review?.remote) return undefined;
+  const { issuer, resource, allowedRedirectUris } = review.remote;
+  if (!Array.isArray(allowedRedirectUris)) throw new Error("INVALID_REMOTE_REVIEW_REDIRECT_URIS");
+  const canonicalRedirects = Array.from(allowedRedirectUris, (uri) => canonicalHttpsUrl(uri, "REDIRECT_URI"));
+  if (canonicalRedirects.length === 0 || canonicalRedirects.length > 5 || new Set(canonicalRedirects).size !== canonicalRedirects.length) {
+    throw new Error("INVALID_REMOTE_REVIEW_REDIRECT_URIS");
+  }
   return {
-    issuer: base,
-    authorization_endpoint: `${base}/oauth/authorize`,
-    token_endpoint: `${base}/oauth/token`,
-    registration_endpoint: `${base}/oauth/register`,
-    revocation_endpoint: `${base}/oauth/revoke`,
-    response_types_supported: ["code"],
-    response_modes_supported: ["query"],
-    grant_types_supported: ["authorization_code", "refresh_token"],
-    code_challenge_methods_supported: ["S256"],
-    token_endpoint_auth_methods_supported: ["none"],
-    scopes_supported: [...SUPPORTED_SCOPES],
+    issuer: canonicalHttpsUrl(issuer, "ISSUER"),
+    resource: canonicalHttpsUrl(resource, "RESOURCE"),
+    allowedRedirectUris: Object.freeze(canonicalRedirects),
   };
 }
 
-function protectedResourceMetadata(base: string): Record<string, unknown> {
+function endpointUrl(issuer: string, path: string): string {
+  return `${issuer.endsWith("/") ? issuer.slice(0, -1) : issuer}${path}`;
+}
+
+function authorizationServerMetadata(issuer: string, review: boolean, issuerIdentification: boolean): Record<string, unknown> {
   return {
-    resource: `${base}/mcp`,
-    authorization_servers: [base],
+    issuer,
+    authorization_endpoint: endpointUrl(issuer, "/oauth/authorize"),
+    token_endpoint: endpointUrl(issuer, "/oauth/token"),
+    registration_endpoint: endpointUrl(issuer, "/oauth/register"),
+    revocation_endpoint: endpointUrl(issuer, "/oauth/revoke"),
+    response_types_supported: ["code"],
+    response_modes_supported: ["query"],
+    grant_types_supported: review ? ["authorization_code"] : ["authorization_code", "refresh_token"],
+    code_challenge_methods_supported: ["S256"],
+    token_endpoint_auth_methods_supported: ["none"],
+    scopes_supported: [...SUPPORTED_SCOPES],
+    ...(issuerIdentification ? { authorization_response_iss_parameter_supported: true } : {}),
+  };
+}
+
+function protectedResourceMetadata(resource: string, issuer: string): Record<string, unknown> {
+  return {
+    resource,
+    authorization_servers: [issuer],
     scopes_supported: [...SUPPORTED_SCOPES],
     bearer_methods_supported: ["header"],
     resource_name: PRODUCT_NAME,
@@ -70,6 +133,7 @@ function pairingPage(opts: {
   scopes: string[];
   error?: string;
 }): string {
+  const escape = (value: string): string => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[char]!));
   const scopeLabels: Record<string, string> = {
     "workspace.read": "Read files in this workspace",
     "workspace.search": "Search this workspace",
@@ -78,10 +142,10 @@ function pairingPage(opts: {
     offline_access: "Stay connected between sessions",
   };
   const scopeList = opts.scopes
-    .map((scope) => `<li>${scopeLabels[scope] ?? scope}</li>`)
+    .map((scope) => `<li>${escape(scopeLabels[scope] ?? scope)}</li>`)
     .join("");
   const errorHtml = opts.error
-    ? `<p class="error" role="alert">${opts.error}</p>`
+    ? `<p class="error" role="alert">${escape(opts.error)}</p>`
     : "";
   return `<!doctype html>
 <html lang="en">
@@ -115,7 +179,7 @@ function pairingPage(opts: {
 <body>
 <div class="card">
   <h1>${PRODUCT_NAME}</h1>
-  <p class="sub">ChatGPT is requesting access to workspace <strong>${opts.workspaceName}</strong> (read-only):</p>
+  <p class="sub">A client is requesting access to <strong>${escape(opts.workspaceName)}</strong> (read-only):</p>
   <ul>${scopeList}</ul>
   <form method="POST" action="authorize">
     <input type="hidden" name="request_id" value="${opts.requestId}">
@@ -133,6 +197,16 @@ function pairingPage(opts: {
 export function createOAuthRouter(deps: OAuthDeps): Router {
   const router = Router();
   const pendingRequests = new Map<string, PendingAuthRequest>();
+  const reviewScopes = ["workspace.read", "git.read"];
+  const remoteReview = resolveRemoteReview(deps.review);
+  const issuerFor = (req: Request): string => remoteReview?.issuer ?? deps.getBaseUrl(req);
+  const resourceFor = (req: Request): string => remoteReview?.resource ?? `${deps.getBaseUrl(req)}/mcp`;
+  const stringFields = (value: unknown): value is Record<string, string> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((field) => typeof field === "string");
+  router.use((req, res, next) => {
+    if (req.path.startsWith("/oauth/")) res.set("Cache-Control", "no-store");
+    if (deps.review && !deps.review.isActive()) { res.status(403).json({ error: "SESSION_CLOSED" }); return; }
+    next();
+  });
 
   const prunePending = (): void => {
     const now = Date.now();
@@ -144,10 +218,10 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
   // ---- Discovery metadata -------------------------------------------------
 
   const asMetadataHandler = (req: Request, res: Response): void => {
-    res.json(authorizationServerMetadata(deps.getBaseUrl(req)));
+    res.json({ ...authorizationServerMetadata(issuerFor(req), !!deps.review, !!remoteReview), ...(deps.review ? { scopes_supported: reviewScopes } : {}) });
   };
   const prMetadataHandler = (req: Request, res: Response): void => {
-    res.json(protectedResourceMetadata(deps.getBaseUrl(req)));
+    res.json({ ...protectedResourceMetadata(resourceFor(req), issuerFor(req)), ...(deps.review ? { scopes_supported: reviewScopes } : {}) });
   };
   router.get("/.well-known/oauth-authorization-server", asMetadataHandler);
   router.get("/.well-known/oauth-authorization-server/mcp", asMetadataHandler);
@@ -158,11 +232,16 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
   // ---- Dynamic Client Registration (RFC 7591) ------------------------------
 
   router.post("/oauth/register", json(), (req, res) => {
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) { res.status(400).json({ error: "invalid_request" }); return; }
     const body = req.body as { client_name?: string; redirect_uris?: unknown };
     const redirectUris = Array.isArray(body.redirect_uris) ? body.redirect_uris : [];
     if (
       redirectUris.length === 0 ||
-      !redirectUris.every((uri) => typeof uri === "string" && isAllowedRedirectUri(uri))
+      redirectUris.length > 5 ||
+      !redirectUris.every((uri) => typeof uri === "string" && isAllowedRedirectUri(uri) && (
+        remoteReview ? remoteReview.allowedRedirectUris.includes(uri) :
+          !deps.review || (new URL(uri).protocol === "http:" && new URL(uri).hostname === "127.0.0.1")
+      ))
     ) {
       res.status(400).json({
         error: "invalid_redirect_uri",
@@ -174,13 +253,13 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       clientName: typeof body.client_name === "string" ? body.client_name.slice(0, 200) : undefined,
       redirectUris: redirectUris as string[],
     });
-    deps.logger.info(`Registered OAuth client ${client.clientId} (${client.clientName ?? "unnamed"})`);
+    deps.logger.info(`Registered OAuth client ${client.clientId}`);
     res.status(201).json({
       client_id: client.clientId,
       client_name: client.clientName,
       redirect_uris: client.redirectUris,
       token_endpoint_auth_method: "none",
-      grant_types: ["authorization_code", "refresh_token"],
+      grant_types: deps.review ? ["authorization_code"] : ["authorization_code", "refresh_token"],
       response_types: ["code"],
     });
   });
@@ -189,6 +268,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
 
   router.get("/oauth/authorize", (req, res) => {
     prunePending();
+    if (!stringFields(req.query)) { res.status(400).json({ error: "invalid_request" }); return; }
     const query = req.query as Record<string, string | undefined>;
     const client = query.client_id ? deps.store.getClient(query.client_id) : undefined;
     if (!client) {
@@ -200,11 +280,16 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       res.status(400).send("Invalid redirect_uri.");
       return;
     }
+    if (remoteReview && !remoteReview.allowedRedirectUris.includes(redirectUri)) {
+      res.status(400).send("Invalid redirect_uri.");
+      return;
+    }
     const fail = (error: string, description: string): void => {
       const url = new URL(redirectUri);
       url.searchParams.set("error", error);
       url.searchParams.set("error_description", description);
       if (query.state) url.searchParams.set("state", query.state);
+      if (remoteReview) url.searchParams.set("iss", remoteReview.issuer);
       res.redirect(url.toString());
     };
     if (query.response_type !== "code") {
@@ -215,7 +300,13 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
       fail("invalid_request", "PKCE with S256 is required");
       return;
     }
-    const scopes = filterScopes(query.scope);
+    if (deps.review && query.resource !== resourceFor(req)) {
+      fail("invalid_target", "Exact review resource required"); return;
+    }
+    const scopes = deps.review ? (query.scope?.split(/\s+/).filter(Boolean) ?? reviewScopes) : filterScopes(query.scope);
+    if (deps.review && (!scopes.length || scopes.some((scope) => !reviewScopes.includes(scope)))) {
+      fail("invalid_scope", "Only review scopes are allowed"); return;
+    }
     const request: PendingAuthRequest = {
       id: randomBytes(16).toString("hex"),
       clientId: client.clientId,
@@ -235,6 +326,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
 
   router.post("/oauth/authorize", urlencoded({ extended: false }), (req, res) => {
     prunePending();
+    if (!stringFields(req.body)) { res.status(400).json({ error: "invalid_request" }); return; }
     const body = req.body as { request_id?: string; pairing_code?: string };
     const request = body.request_id ? pendingRequests.get(body.request_id) : undefined;
     if (!request) {
@@ -277,12 +369,14 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     const url = new URL(request.redirectUri);
     url.searchParams.set("code", code);
     if (request.state) url.searchParams.set("state", request.state);
+    if (remoteReview) url.searchParams.set("iss", remoteReview.issuer);
     res.redirect(url.toString());
   });
 
   // ---- Token endpoint --------------------------------------------------------
 
   router.post("/oauth/token", urlencoded({ extended: false }), json(), (req, res) => {
+    if (!stringFields(req.body)) { res.status(400).json({ error: "invalid_request" }); return; }
     const body = req.body as Record<string, string | undefined>;
     const grantType = body.grant_type;
 
@@ -306,7 +400,11 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
         res.status(400).json({ error: "invalid_grant", error_description: "PKCE verification failed" });
         return;
       }
-      const tokens = deps.store.issueTokens({ clientId, scopes: record.scopes });
+      if (deps.review && (redirectUri !== record.redirectUri || record.resource !== resourceFor(req) || body.resource !== record.resource)) {
+        res.status(400).json({ error: "invalid_target" }); return;
+      }
+      const tokens = deps.store.issueTokens({ clientId, scopes: record.scopes,
+        ...(deps.review ? { accessTtlMs: Math.max(1, deps.review.expiresAt - Date.now()) } : {}) });
       deps.logger.info(`Issued access token for client ${clientId}`);
       res.json({
         access_token: tokens.accessToken,
@@ -319,6 +417,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
     }
 
     if (grantType === "refresh_token") {
+      if (deps.review) { res.status(400).json({ error: "unsupported_grant_type" }); return; }
       const { refresh_token: refreshToken, client_id: clientId } = body;
       if (!refreshToken || !clientId) {
         res.status(400).json({ error: "invalid_request" });
@@ -345,6 +444,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
   // ---- Revocation (RFC 7009) ---------------------------------------------------
 
   router.post("/oauth/revoke", urlencoded({ extended: false }), (req, res) => {
+    if (!stringFields(req.body)) { res.status(400).json({ error: "invalid_request" }); return; }
     const body = req.body as { token?: string };
     if (body.token) deps.store.revokeToken(body.token);
     res.status(200).json({});

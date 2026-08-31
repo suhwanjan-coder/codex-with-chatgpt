@@ -1,5 +1,19 @@
 # Codex with ChatGPT
 
+> **C2C 可按需使用；十组完整流程比较已完成。**
+> 用户只需使用一个关键词 `C2C`；请先阅读 [C2C 使用说明](docs/C2C_USAGE.md) 和
+> [目前操作指南](docs/HARDENED_REVIEW.md)。
+> Codex 负责计划、执行、验证和清理；ChatGPT 只从一个已批准的固定 snapshot 提供建议。
+> 支持的类别是 `public` 和明确审阅过的 `non-sensitive`；未分类内容仅限本地。
+> 真实 permit 必须同时绑定 `reviewedSnapshotDigest` 和目标地址批准。
+> 十个真实 ChatGPT 任务已完成限定读取与撤权清理，个人按需实用性评分 7/10。
+> Ordinary 通过 10/10、C2C 8/10；C2C 中位耗时为 Ordinary 的 1.92 倍。
+> 净额度收益与顾问入口的额度归属未量测；ChatGPT Work 与 Codex 共用额度，换网页不等于换额度。
+> 本版安装与旧电脑接手请读[跨机接手说明](docs/C2C_CROSS_MACHINE.md)。
+> [真实使用报告](docs/C2C_REAL_ACCEPTANCE.md)保留失败与限制；不宣称安全认证、普遍更快或节省额度。
+> 以下上游说明保留为历史背景，不是此副本的安装指示；旧指令、无限制 tunnel、
+> 自动修复与规划循环仍已停用。
+
 [English](README.md) | **简体中文**
 
 > ChatGPT 负责思考，Codex 负责干活。

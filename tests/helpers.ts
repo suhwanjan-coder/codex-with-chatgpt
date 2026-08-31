@@ -24,6 +24,21 @@ export function cleanup(dir: string): void {
   }
 }
 
+export function canCreateFileSymlink(): boolean {
+  if (process.platform !== "win32") return true;
+  const dir = makeTmpDir("symlink-probe");
+  const target = write(dir, "target.txt", "probe\n");
+  try {
+    fs.symlinkSync(target, path.join(dir, "link.txt"));
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "EPERM") return false;
+    throw error;
+  } finally {
+    cleanup(dir);
+  }
+}
+
 export function write(dir: string, rel: string, content: string): string {
   const file = path.join(dir, rel);
   fs.mkdirSync(path.dirname(file), { recursive: true });

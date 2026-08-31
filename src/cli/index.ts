@@ -26,6 +26,7 @@ import {
   type LastEndpoint,
 } from "../config/endpoint.js";
 import { PRODUCT_NAME, VERSION } from "../version.js";
+import { registerReviewCommands } from "./review.js";
 
 const program = new Command();
 
@@ -123,9 +124,15 @@ async function ensureBridgeAndTunnel(
 
 program
   .name("c2c")
-  .description(`${PRODUCT_NAME} — ChatGPT thinks. Codex works.`)
+  .description(`${PRODUCT_NAME}: approved snapshot review.`)
   .version(VERSION, "-v, --version")
   .configureHelp({ sortSubcommands: true });
+
+// Legacy commands remain as reference code, but cannot perform any side effects.
+program.hook("preAction", (_command, action) => {
+  if (action.parent?.name() !== "review") throw new Error("LEGACY_COMMAND_DISABLED: use c2c review --help.");
+});
+registerReviewCommands(program);
 
 // ---------------------------------------------------------------- serve (internal)
 
@@ -152,7 +159,7 @@ program
 // ---------------------------------------------------------------- start
 
 program
-  .command("start")
+  .command("start", { hidden: true })
   .description("Start (or reuse) the bridge for this workspace")
   .option("-w, --workspace <path>", "workspace root (defaults to current directory)")
   .option("--tunnel", "also establish the secure public connection", false)
@@ -185,7 +192,7 @@ program
 // ---------------------------------------------------------------- setup
 
 program
-  .command("setup")
+  .command("setup", { hidden: true })
   .description("First-time setup: bridge + secure connection + pairing code")
   .option("-w, --workspace <path>")
   .option("--no-tunnel", "local-only setup (development)")
@@ -249,7 +256,7 @@ program
 // ---------------------------------------------------------------- stop / restart
 
 program
-  .command("stop")
+  .command("stop", { hidden: true })
   .description("Stop the bridge for this workspace")
   .option("-w, --workspace <path>")
   .action(async (opts: { workspace?: string }) => {
@@ -259,7 +266,7 @@ program
   });
 
 program
-  .command("restart")
+  .command("restart", { hidden: true })
   .description("Restart the bridge for this workspace")
   .option("-w, --workspace <path>")
   .option("--tunnel", "re-establish the secure public connection", false)
@@ -279,7 +286,7 @@ program
 // ---------------------------------------------------------------- status
 
 program
-  .command("status")
+  .command("status", { hidden: true })
   .description("Show bridge status for this workspace")
   .option("-w, --workspace <path>")
   .option("--json", "machine-readable output", false)
@@ -309,7 +316,7 @@ program
 // ---------------------------------------------------------------- doctor
 
 program
-  .command("doctor")
+  .command("doctor", { hidden: true })
   .description("Diagnose and auto-repair the connection")
   .option("-w, --workspace <path>")
   .option("--no-fix", "diagnose only, do not repair")
@@ -557,7 +564,7 @@ program
 // ---------------------------------------------------------------- pair / unpair
 
 program
-  .command("pair")
+  .command("pair", { hidden: true })
   .description("Generate a fresh pairing code")
   .option("-w, --workspace <path>")
   .option("--json", "machine-readable output", false)
@@ -576,7 +583,7 @@ program
   });
 
 program
-  .command("unpair")
+  .command("unpair", { hidden: true })
   .description("Revoke ChatGPT's access to this workspace immediately")
   .option("-w, --workspace <path>")
   .action(async (opts: { workspace?: string }) => {
@@ -595,7 +602,7 @@ program
 // ---------------------------------------------------------------- logs / workspace / record
 
 program
-  .command("logs")
+  .command("logs", { hidden: true })
   .description("Show recent bridge logs")
   .option("-w, --workspace <path>")
   .option("-n, --lines <n>", "number of lines", "50")
@@ -618,7 +625,7 @@ program
   });
 
 program
-  .command("workspace")
+  .command("workspace", { hidden: true })
   .description("Show workspace identity and project info")
   .option("-w, --workspace <path>")
   .option("--json", "machine-readable output", false)
@@ -637,7 +644,7 @@ program
 // ---------------------------------------------------------------- sandbox-allow (Codex writable_roots, macOS + Windows)
 
 program
-  .command("sandbox-allow")
+  .command("sandbox-allow", { hidden: true })
   .description("Add the local settings directory to the Codex sandbox allowlist")
   .option("--json", "machine-readable output", false)
   .action((opts: { json: boolean }) => {
@@ -671,7 +678,7 @@ function runGit(args: string[]): { ok: boolean; stdout: string } {
 }
 
 program
-  .command("update-check")
+  .command("update-check", { hidden: true })
   .description("Check GitHub for a newer version (real check at most once per local day)")
   .option("--force", "check even if already checked today", false)
   .option("--json", "machine-readable output", false)
@@ -735,7 +742,7 @@ function sessionFile(workspaceId: string): string {
 }
 
 const session = program
-  .command("session")
+  .command("session", { hidden: true })
   .description("Remember and reuse the ChatGPT conversation for this workspace");
 
 session

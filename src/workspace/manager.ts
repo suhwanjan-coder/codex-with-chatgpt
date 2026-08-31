@@ -3,7 +3,7 @@ import path from "node:path";
 import { createHash } from "node:crypto";
 import readline from "node:readline";
 import { IgnoreRules } from "./ignore.js";
-import { readJsonIfExists } from "../config/paths.js";
+import { readWorkspaceConfigJson } from "./config.js";
 
 export type WorkspaceErrorCode =
   | "INVALID_PATH"
@@ -85,14 +85,13 @@ export class Workspace {
     this.root = real;
     this.id = createHash("sha256").update(normCase(real)).digest("hex").slice(0, 12);
     this.ignoreRules = new IgnoreRules(real);
-    this.projectConfig = readJsonIfExists<ProjectConfig>(path.join(real, ".c2c.json")) ?? {};
+    this.projectConfig = readWorkspaceConfigJson<ProjectConfig>(real, ".c2c.json") ?? {};
     this.name = this.projectConfig.name ?? path.basename(real);
   }
 
   private contains(candidate: string): boolean {
-    const r = normCase(this.root);
-    const c = normCase(candidate);
-    return c === r || c.startsWith(r + path.sep);
+    const relative = path.relative(normCase(this.root), normCase(candidate));
+    return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`));
   }
 
   /**
@@ -140,7 +139,7 @@ export class Workspace {
       );
     }
     const rel = path.relative(this.root, canonical).split(path.sep).join("/");
-    if (rel.startsWith("..")) {
+    if (rel === ".." || rel.startsWith("../") || path.isAbsolute(rel)) {
       throw new WorkspaceError("PATH_OUTSIDE_WORKSPACE", `Path resolves outside the connected workspace: ${requested}`);
     }
     if (!opts.allowSensitive && rel !== "" && this.ignoreRules.isSensitive(rel)) {
@@ -308,11 +307,11 @@ export class Workspace {
     if (has("package.json")) {
       projectType = "node";
       languages.add("JavaScript");
-      const pkg = readJsonIfExists<{
+      const pkg = readWorkspaceConfigJson<{
         scripts?: Record<string, string>;
         dependencies?: Record<string, string>;
         devDependencies?: Record<string, string>;
-      }>(path.join(this.root, "package.json"));
+      }>(this.root, "package.json");
       scripts = pkg?.scripts ?? {};
       const deps = { ...(pkg?.dependencies ?? {}), ...(pkg?.devDependencies ?? {}) };
       const known: Record<string, string> = {

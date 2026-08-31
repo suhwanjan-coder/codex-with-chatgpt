@@ -4,6 +4,7 @@ import { IgnoreRules } from "./ignore.js";
 export interface GitCommandResult {
   ok: boolean;
   stdout: string;
+  stdoutBytes: Buffer;
   stderr: string;
   code: number | null;
 }
@@ -11,14 +12,21 @@ export interface GitCommandResult {
 export function runGit(root: string, args: string[]): GitCommandResult {
   const result = spawnSync("git", args, {
     cwd: root,
-    encoding: "utf8",
+    encoding: null,
     maxBuffer: 64 * 1024 * 1024,
     timeout: 30_000,
   });
+  const stdoutBytes = Buffer.isBuffer(result.stdout)
+    ? result.stdout
+    : Buffer.from(result.stdout ?? "", "utf8");
+  const stderr = Buffer.isBuffer(result.stderr)
+    ? result.stderr.toString("utf8")
+    : result.stderr ?? "";
   return {
     ok: result.status === 0,
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
+    stdout: stdoutBytes.toString("utf8"),
+    stdoutBytes,
+    stderr,
     code: result.status,
   };
 }
@@ -72,38 +80,66 @@ export function gitStatus(root: string): GitStatusResult {
     untracked: [],
     conflicted: [],
   };
-  const result = runGit(root, ["status", "--porcelain=v2", "--branch", "--", "."]);
+  const result = runGit(root, ["status", "--porcelain=v2", "-z", "--branch", "--", "."]);
   if (!result.ok) return empty;
   const out: GitStatusResult = { ...empty, isRepo: true };
-  for (const line of result.stdout.split("\n")) {
-    if (line.startsWith("# branch.head ")) {
-      out.branch = line.slice("# branch.head ".length).trim();
-    } else if (line.startsWith("# branch.upstream ")) {
-      out.upstream = line.slice("# branch.upstream ".length).trim();
-    } else if (line.startsWith("# branch.ab ")) {
-      const m = line.match(/\+(\d+) -(\d+)/);
+  const records = result.stdout.split("\0");
+  for (let index = 0; index < records.length; index += 1) {
+    const record = records[index];
+    if (!record) continue;
+
+    if (record.startsWith("# branch.head ")) {
+      out.branch = record.slice("# branch.head ".length).trim();
+    } else if (record.startsWith("# branch.upstream ")) {
+      out.upstream = record.slice("# branch.upstream ".length).trim();
+    } else if (record.startsWith("# branch.ab ")) {
+      const m = record.match(/\+(\d+) -(\d+)/);
       if (m) {
         out.ahead = parseInt(m[1], 10);
         out.behind = parseInt(m[2], 10);
       }
-    } else if (line.startsWith("1 ") || line.startsWith("2 ")) {
-      const parts = line.split(" ");
-      const xy = parts[1];
-      const filePath = line.startsWith("2 ")
-        ? line.split("\t")[0]?.split(" ").slice(9).join(" ") + " -> " + (line.split("\t")[1] ?? "")
-        : parts.slice(8).join(" ");
-      const x = xy[0];
-      const y = xy[1];
+    } else if (record.startsWith("1 ")) {
+      const parsed = splitPorcelainRecord(record, 8);
+      if (!parsed) continue;
+      const xy = parsed.fields[1] ?? "";
+      const x = xy[0] ?? ".";
+      const y = xy[1] ?? ".";
+      if (x !== ".") out.staged.push({ path: parsed.path, change: x });
+      if (y !== ".") out.unstaged.push({ path: parsed.path, change: y });
+    } else if (record.startsWith("2 ")) {
+      const parsed = splitPorcelainRecord(record, 9);
+      const originalPath = records[index + 1];
+      if (!parsed || !originalPath) continue;
+      index += 1;
+      const xy = parsed.fields[1] ?? "";
+      const x = xy[0] ?? ".";
+      const y = xy[1] ?? ".";
+      const filePath = `${originalPath} -> ${parsed.path}`;
       if (x !== ".") out.staged.push({ path: filePath, change: x });
       if (y !== ".") out.unstaged.push({ path: filePath, change: y });
-    } else if (line.startsWith("? ")) {
-      out.untracked.push(line.slice(2));
-    } else if (line.startsWith("u ")) {
-      const parts = line.split(" ");
-      out.conflicted.push(parts.slice(10).join(" "));
+    } else if (record.startsWith("? ")) {
+      out.untracked.push(record.slice(2));
+    } else if (record.startsWith("u ")) {
+      const parsed = splitPorcelainRecord(record, 10);
+      if (parsed) out.conflicted.push(parsed.path);
     }
   }
   return out;
+}
+
+function splitPorcelainRecord(
+  record: string,
+  metadataFieldCount: number
+): { fields: string[]; path: string } | null {
+  const fields: string[] = [];
+  let offset = 0;
+  for (let index = 0; index < metadataFieldCount; index += 1) {
+    const separator = record.indexOf(" ", offset);
+    if (separator < 0) return null;
+    fields.push(record.slice(offset, separator));
+    offset = separator + 1;
+  }
+  return { fields, path: record.slice(offset) };
 }
 
 export type DiffMode = "unstaged" | "staged" | "head";
@@ -124,7 +160,15 @@ export interface GitDiffResult {
   hasMore: boolean;
   nextOffset: number | null;
   diff: string;
+  error?: GitDiffError;
 }
+
+export type GitDiffError =
+  | "GIT_DIFF_INVENTORY_FAILED"
+  | "GIT_DIFF_BATCH_FAILED"
+  | "GIT_DIFF_TOO_LARGE"
+  | "GIT_DIFF_UNSAFE_METADATA"
+  | "GIT_DIFF_INVALID_OFFSET";
 
 export interface WorkspaceLike {
   root: string;
@@ -139,23 +183,26 @@ function getDiffModeArgs(mode: DiffMode): string[] {
   return [];
 }
 
-function chunkSafePaths(paths: string[], maxCount = 50, maxBytes = 32 * 1024): string[][] {
+function chunkSafePaths(pathGroups: string[][], maxCount = 50, maxBytes = 32 * 1024): string[][] {
   const batches: string[][] = [];
   let currentBatch: string[] = [];
   let currentBytes = 0;
 
-  for (const p of paths) {
-    const pBytes = Buffer.byteLength(p, "utf8") + 12; // overhead for ":(literal)"
+  for (const group of pathGroups) {
+    const groupBytes = group.reduce(
+      (total, p) => total + Buffer.byteLength(p, "utf8") + 12,
+      0
+    ); // overhead for ":(literal)"
     if (
       currentBatch.length > 0 &&
-      (currentBatch.length >= maxCount || currentBytes + pBytes > maxBytes)
+      (currentBatch.length + group.length > maxCount || currentBytes + groupBytes > maxBytes)
     ) {
       batches.push(currentBatch);
       currentBatch = [];
       currentBytes = 0;
     }
-    currentBatch.push(p);
-    currentBytes += pBytes;
+    currentBatch.push(...group);
+    currentBytes += groupBytes;
   }
   if (currentBatch.length > 0) {
     batches.push(currentBatch);
@@ -163,9 +210,84 @@ function chunkSafePaths(paths: string[], maxCount = 50, maxBytes = 32 * 1024): s
   return batches;
 }
 
+function normalizeScope(scope?: string): string | undefined {
+  if (!scope || scope === ".") return scope;
+  const slashScope = scope.replace(/\\/g, "/");
+  if (slashScope === "./") return ".";
+  const withoutLeadingCurrent = slashScope.replace(/^(?:\.\/)+/, "");
+  const withoutTrailingSlash = withoutLeadingCurrent.replace(/\/+$/, "");
+  return withoutTrailingSlash || slashScope;
+}
+
 function isPathInScope(filePath: string, scope?: string): boolean {
-  if (!scope || scope === ".") return true;
-  return filePath === scope || filePath.startsWith(scope + "/");
+  const normalizedScope = normalizeScope(scope);
+  if (!normalizedScope || normalizedScope === ".") return true;
+  return filePath === normalizedScope || filePath.startsWith(normalizedScope + "/");
+}
+
+type GitPatchValidation =
+  | { ok: true; patch: string }
+  | { ok: false };
+
+const RAW_DIFF_HEADER = /^:[0-7]{6} [0-7]{6} (?:[0-9a-f]{40}|[0-9a-f]{64}) (?:[0-9a-f]{40}|[0-9a-f]{64}) (?:[ADMTUXB]|[RC](?:[0-9]{1,2}|100))$/;
+
+/**
+ * Accept only Git's NUL-delimited raw records and return the patch verbatim.
+ * The raw records, rather than quoted patch headers, are the authorization source.
+ */
+export function extractValidatedGitPatch(
+  output: string,
+  allowedPaths: ReadonlySet<string>,
+  isSensitive: (filePath: string) => boolean
+): GitPatchValidation {
+  let offset = 0;
+  let records = 0;
+
+  const readNulToken = (): string | null => {
+    const terminator = output.indexOf("\0", offset);
+    if (terminator < 0) return null;
+    const token = output.slice(offset, terminator);
+    offset = terminator + 1;
+    return token;
+  };
+
+  const validatePath = (filePath: string | null): filePath is string =>
+    filePath !== null && filePath.length > 0 && allowedPaths.has(filePath) && !isSensitive(filePath);
+
+  while (output[offset] === ":") {
+    const header = readNulToken();
+    if (!header || !RAW_DIFF_HEADER.test(header)) return { ok: false };
+
+    const status = header.at(-1)!;
+    const oldPath = readNulToken();
+    if (!validatePath(oldPath)) return { ok: false };
+
+    if (status >= "0" && status <= "9") {
+      const newPath = readNulToken();
+      if (!validatePath(newPath)) return { ok: false };
+    }
+    records += 1;
+  }
+
+  // Git emits one NUL separator between the final raw pathname and --patch output.
+  if (records === 0 || output[offset] !== "\0") return { ok: false };
+  offset += 1;
+  if (!output.startsWith("diff --git ", offset)) return { ok: false };
+  return { ok: true, patch: output.slice(offset) };
+}
+
+function emptyGitDiff(mode: DiffMode, isRepo: boolean, error?: GitDiffError): GitDiffResult {
+  return {
+    isRepo,
+    mode,
+    totalBytes: 0,
+    offset: 0,
+    returnedBytes: 0,
+    hasMore: false,
+    nextOffset: null,
+    diff: "",
+    ...(error ? { error } : {}),
+  };
 }
 
 export function gitDiff(
@@ -180,8 +302,9 @@ export function gitDiff(
       : new IgnoreRules(root);
 
   const mode = opts.mode ?? "unstaged";
-  const offset = Math.max(0, Math.floor(opts.offset ?? 0));
-  const maxBytes = Math.min(256 * 1024, Math.max(1024, Math.floor(opts.maxBytes ?? 64 * 1024)));
+  const rawOffset = opts.offset ?? 0;
+  const rawMaxBytes = opts.maxBytes ?? 64 * 1024;
+  const scope = relPath ?? opts.path;
   const modeArgs = getDiffModeArgs(mode);
 
   // 1. Full-workspace inventory using NUL separation and global rename detection
@@ -196,20 +319,18 @@ export function gitDiff(
   ];
   const listResult = runGit(root, listArgs);
   if (!listResult.ok) {
-    return {
-      isRepo: false,
-      mode,
-      totalBytes: 0,
-      offset: 0,
-      returnedBytes: 0,
-      hasMore: false,
-      nextOffset: null,
-      diff: "",
-    };
+    const check = runGit(root, ["rev-parse", "--is-inside-work-tree"]);
+    const isRepo = check.ok && check.stdout.trim() === "true";
+    return emptyGitDiff(mode, isRepo, isRepo ? "GIT_DIFF_INVENTORY_FAILED" : undefined);
   }
+  if (!Number.isFinite(rawOffset) || !Number.isFinite(rawMaxBytes)) {
+    return emptyGitDiff(mode, true, "GIT_DIFF_INVALID_OFFSET");
+  }
+  const offset = Math.max(0, Math.floor(rawOffset));
+  const maxBytes = Math.min(256 * 1024, Math.max(1024, Math.floor(rawMaxBytes)));
 
   const tokens = listResult.stdout.split("\0");
-  const safePaths: string[] = [];
+  const safePathGroups: string[][] = [];
   for (let i = 0; i < tokens.length; ) {
     const status = tokens[i++];
     if (!status) break;
@@ -220,39 +341,30 @@ export function gitDiff(
         // Layer 1: Security - EITHER side sensitive -> completely unsafe
         const isSafe = !ignoreRules.isSensitive(oldPath) && !ignoreRules.isSensitive(newPath);
         // Layer 2: Scope - EITHER side in scope -> relevant
-        const isRelevant = isPathInScope(oldPath, relPath) || isPathInScope(newPath, relPath);
+        const isRelevant = isPathInScope(oldPath, scope) || isPathInScope(newPath, scope);
         if (isSafe && isRelevant) {
-          safePaths.push(oldPath, newPath);
+          safePathGroups.push([oldPath, newPath]);
         }
       }
     } else {
       const filePath = tokens[i++];
       if (filePath) {
         const isSafe = !ignoreRules.isSensitive(filePath);
-        const isRelevant = isPathInScope(filePath, relPath);
+        const isRelevant = isPathInScope(filePath, scope);
         if (isSafe && isRelevant) {
-          safePaths.push(filePath);
+          safePathGroups.push([filePath]);
         }
       }
     }
   }
 
-  if (safePaths.length === 0) {
-    return {
-      isRepo: true,
-      mode,
-      totalBytes: 0,
-      offset: 0,
-      returnedBytes: 0,
-      hasMore: false,
-      nextOffset: null,
-      diff: "",
-    };
+  if (safePathGroups.length === 0) {
+    return emptyGitDiff(mode, true);
   }
 
   // 2. Fetch diffs for safe paths in bounded batches (path count + argv bytes)
-  const batches = chunkSafePaths(safePaths);
-  let combinedDiff = "";
+  const batches = chunkSafePaths(safePathGroups);
+  const diffChunks: Buffer[] = [];
   let totalAggregateBytes = 0;
   const MAX_AGGREGATE_DIFF_BYTES = 64 * 1024 * 1024;
 
@@ -261,6 +373,13 @@ export function gitDiff(
     const diffArgs = [
       "diff",
       "--no-color",
+      "--no-ext-diff",
+      "--no-textconv",
+      "--submodule=short",
+      "--no-abbrev",
+      "--raw",
+      "-z",
+      "--patch",
       "--find-renames=1%",
       ...modeArgs,
       "--",
@@ -269,58 +388,61 @@ export function gitDiff(
     const diffResult = runGit(root, diffArgs);
     if (!diffResult.ok) {
       // Fail closed on any batch error: never return partial silent success
-      return {
-        isRepo: false,
-        mode,
-        totalBytes: 0,
-        offset: 0,
-        returnedBytes: 0,
-        hasMore: false,
-        nextOffset: null,
-        diff: "",
-      };
+      return emptyGitDiff(mode, true, "GIT_DIFF_BATCH_FAILED");
     }
-    if (diffResult.stdout) {
-      const chunkBytes = Buffer.byteLength(diffResult.stdout, "utf8");
+    const validated = extractValidatedGitPatch(
+      diffResult.stdout,
+      new Set(batch),
+      (filePath) => ignoreRules.isSensitive(filePath)
+    );
+    if (!validated.ok) {
+      return emptyGitDiff(mode, true, "GIT_DIFF_UNSAFE_METADATA");
+    }
+    if (validated.patch) {
+      const patchBytes = Buffer.from(validated.patch, "utf8");
+      const patchOffset = diffResult.stdoutBytes.length - patchBytes.length;
+      if (
+        patchOffset < 0 ||
+        !diffResult.stdoutBytes.subarray(patchOffset).equals(patchBytes)
+      ) {
+        return emptyGitDiff(mode, true, "GIT_DIFF_UNSAFE_METADATA");
+      }
+      const chunkBytes = patchBytes.length;
       if (totalAggregateBytes + chunkBytes > MAX_AGGREGATE_DIFF_BYTES) {
         // Fail closed on aggregate cap: do not fake a partial successful diff
-        return {
-          isRepo: false,
-          mode,
-          totalBytes: 0,
-          offset: 0,
-          returnedBytes: 0,
-          hasMore: false,
-          nextOffset: null,
-          diff: "",
-        };
+        return emptyGitDiff(mode, true, "GIT_DIFF_TOO_LARGE");
       }
-      combinedDiff += diffResult.stdout;
+      diffChunks.push(patchBytes);
       totalAggregateBytes += chunkBytes;
     }
   }
 
-  const full = Buffer.from(combinedDiff, "utf8");
-  const slice = full.subarray(offset, offset + maxBytes);
-  let text = slice.toString("utf8");
-  let sliceLen = slice.length;
-  // Avoid cutting mid-line when more content follows.
-  if (offset + sliceLen < full.length) {
-    const lastNewline = text.lastIndexOf("\n");
-    if (lastNewline > 0) {
-      text = text.slice(0, lastNewline + 1);
-      sliceLen = Buffer.byteLength(text, "utf8");
+  const full = Buffer.concat(diffChunks, totalAggregateBytes);
+  if (offset < full.length && (full[offset] & 0xc0) === 0x80) {
+    return emptyGitDiff(mode, true, "GIT_DIFF_INVALID_OFFSET");
+  }
+  let end = Math.min(full.length, offset + maxBytes);
+  while (end > offset && end < full.length && (full[end] & 0xc0) === 0x80) {
+    end -= 1;
+  }
+  if (end < full.length) {
+    const lastNewline = full.lastIndexOf(0x0a, end - 1);
+    if (lastNewline >= offset) {
+      end = lastNewline + 1;
     }
   }
-  const hasMore = offset + sliceLen < full.length;
+  const page = full.subarray(offset, end);
+  const text = page.toString("utf8");
+  const returnedBytes = page.length;
+  const hasMore = end < full.length;
   return {
     isRepo: true,
     mode,
     totalBytes: full.length,
     offset,
-    returnedBytes: sliceLen,
+    returnedBytes,
     hasMore,
-    nextOffset: hasMore ? offset + sliceLen : null,
+    nextOffset: hasMore ? end : null,
     diff: text,
   };
 }

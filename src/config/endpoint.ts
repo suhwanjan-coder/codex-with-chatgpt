@@ -53,7 +53,9 @@ export function connectorAction(
 
 export function sanitizeConnectorLabel(name: string, workspaceId: string): string {
   const cleaned = name.replace(/[^\p{L}\p{N}._\- ]+/gu, "").replace(/\s+/g, " ").trim();
-  return cleaned.slice(0, 40) || workspaceId.slice(0, 6);
+  // Keep the existing code-unit budget without emitting half of an astral letter.
+  const limited = cleaned.slice(0, 40).replace(/[\uD800-\uDBFF]$/, "");
+  return limited || workspaceId.slice(0, 6);
 }
 
 /**

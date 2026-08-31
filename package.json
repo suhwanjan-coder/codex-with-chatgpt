@@ -14,22 +14,25 @@
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli/index.ts",
     "test": "vitest run",
+    "test:g7": "node scripts/verify-g7.mjs",
+    "test:g7:windows-native": "node scripts/verify-g7-windows.mjs",
+    "test:g7:preflight": "node scripts/g7-preflight.mjs",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"
   },
-  "packageManager": "pnpm@11.24.0",
+  "packageManager": "pnpm@11.19.0",
   "dependencies": {
-    "@modelcontextprotocol/sdk": "latest",
+    "@modelcontextprotocol/sdk": "1.30.0",
     "commander": "^14.0.0",
     "express": "^5.1.0",
     "ignore": "^7.0.5",
+    "typescript": "^5.9.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
     "@types/express": "^5.0.3",
     "@types/node": "^22.15.0",
     "tsx": "^4.20.0",
-    "typescript": "^5.9.0",
     "vitest": "^3.2.0"
   }
 }

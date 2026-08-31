@@ -1,5 +1,23 @@
 # Codex with ChatGPT
 
+> **OPT-IN C2C AVAILABLE; TEN-PAIR FULL-ROUTE BENCHMARK COMPLETE.**
+> Use the single user-facing keyword `C2C`; read [C2C usage](docs/C2C_USAGE.md) and
+> [the current operating guide](docs/HARDENED_REVIEW.md).
+> Codex owns planning, execution, verification and cleanup; ChatGPT advises from one
+> approved fixed snapshot. Supported classes are `public` and explicitly reviewed
+> `non-sensitive`; unclassified content is local-only. Real permits require
+> `reviewedSnapshotDigest` plus destination-bound approval.
+> Ten real ChatGPT cases completed with scoped reads and verified cleanup.
+> Personal-use score: 7/10. Ordinary passed 10/10, C2C 8/10; C2C median time was
+> 1.92x Ordinary. Net Codex quota savings and the advisor's quota pool were not measured.
+> ChatGPT Work shares Codex usage; switching websites alone does not establish savings.
+> See [cross-machine setup](docs/C2C_CROSS_MACHINE.md) for this fork's install route.
+> See the [real-use report](docs/C2C_REAL_ACCEPTANCE.md). No security certification
+> or general performance advantage is claimed; synthetic evidence stays separate.
+> The upstream instructions below are retained as historical context, not runnable
+> setup guidance for this fork. Legacy commands, unrestricted tunnels, automatic
+> repair and the planning loop remain disabled.
+
 > ChatGPT thinks. Codex works.
 > ChatGPT 负责思考，Codex 负责干活。
 
