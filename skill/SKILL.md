@@ -1,12 +1,17 @@
 ---
 name: c2c
-description: "C2C executes the established end-to-end workflow for the current task: Codex plans and delivers; ChatGPT advises from an approved fixed snapshot. Activate only when the user invokes C2C."
+description: "C2C executes the established end-to-end workflow for the current task: Codex plans and delivers; ChatGPT advises from an approved fixed snapshot. Discover it for a user's explicit request to use C2C for that task."
 ---
 
 # C2C: Current-Task Workflow
 
-This skill source stays project-local and is NOT globally installed. `C2C` is one
-explicit, task-bound workflow, not a menu of review or trial modes. It means:
+This checkout contains the canonical workflow. The separate
+[global-entry router](global-entry/SKILL.md) routes an explicitly requested
+cross-project C2C task back to this source without duplicating the workflow.
+`C2C` is one explicit, task-bound workflow, not a menu of review or trial modes.
+Skill discovery may follow that explicit natural-language intent, but discovery
+does not activate the workflow by relevance; Ordinary Codex remains the default.
+Use `$c2c` as an optional shortcut. It means:
 Codex owns the whole plan and decomposition; ChatGPT reads only the approved fixed
 snapshot to advise; Codex makes edits, runs tests, verifies results, and cleans up.
 Council is reserved for major tradeoffs.
@@ -99,8 +104,10 @@ as an implicit part of a review.
   Do not re-run G7 unless a change touches
   its Windows containment boundary, and do not transfer the synthetic 9/10 score
   to real usage.
-- C2C wording alone is not authorization for an external run, account/settings
-  change, connection, paid usage, broader scope, or a global installation.
+- Explicit C2C intent activates this workflow only; it is not authorization for an
+  external run, account/settings change, connection, paid usage, broader scope, or
+  any installation. The global-entry router only routes and grants no additional
+  dependencies, global settings, or external workflow permission.
 - Quality standard: describe completion only with direct evidence; call out every
   unmet gate or missing observation; never convert a fixture, listener, or local
   test into evidence of a real external review.

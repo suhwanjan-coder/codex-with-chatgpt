@@ -2,14 +2,14 @@
 
 ## 定位與適用範圍
 
-- C2C 是目前任務的單一路徑：Codex 擁有整體計畫與任務拆解；ChatGPT 僅讀取經核准的固定 snapshot 提供建議；Codex 負責修改、測試、驗證與清理。使用者說 `C2C` 即啟用此既定流程，不另分口令或要求選模式。
+- C2C 是目前任務的單一路徑：Codex 擁有整體計畫與任務拆解；ChatGPT 僅讀取經核准的固定 snapshot 提供建議；Codex 負責修改、測試、驗證與清理。使用者以自然語言明確要求本次任務使用 C2C 即可啟用；`$c2c` 是可選捷徑，不另分口令或要求選模式。
 - AI Council 只處理重大取捨；它不接管 C2C 的計畫、執行或驗證。
 - 目標是讓為 Achi 客製的 C2C 在安全邊界內比 upstream 更實用：主動找出壞掉路徑與值得做的改善，並以實證保留改善。新需求必須併入整體設計，不能以臨時 patch 疊加。
 - Ordinary Codex 使用本機工具不代表模型本身純本機；snapshot 分類限制仍完整適用。
 - 現行 local C2C workflow 支援明確分類的 `public` 與經審閱的 `non-sensitive`；`synthetic` 僅保留為 legacy 證據。未分類 snapshot 只能 local-only。
-- C2C 的現行入口是單一使用者關鍵字 `C2C`；操作者（Codex）擁有全部步驟，從任務定義、snapshot、執行、修改、測試到驗證與清理。詳見[使用說明](C2C_USAGE.md)。
+- C2C 的現行入口是使用者明確的自然語言意圖（或 `$c2c` 捷徑）；操作者（Codex）擁有全部步驟，從任務定義、snapshot、執行、修改、測試到驗證與清理。詳見[使用說明](C2C_USAGE.md)。
 - 真實 external permit 需 exact snapshot 的 `reviewedSnapshotDigest` 與 destination-bound approval；每批只對 exact scope 取得一次 gate。snapshot 消耗後必須建立 fresh snapshot/permit；retry 僅限事前批准的 bounded scope。
-- 本專案的 skill 名稱是 `c2c`；`skill/agents/openai.yaml` 的 `allow_implicit_invocation` 為 `false`。skill 留在 checkout、未全域安裝；不得全域安裝或在普通 coding 中隱式啟動。
+- 本專案的 skill 名稱是 `c2c`；`skill/agents/openai.yaml` 的 `allow_implicit_invocation` 為 `true`，只允許 skill 依明確自然語言意圖被發現，不會因相關性自動啟動。[全域入口 source](../skill/global-entry/SKILL.md) 仍只負責跨專案路由；普通 coding 不會隱式啟動 C2C。
 - 已完成十組 Live ChatGPT real-repository 配對比較，個人按需實用性 7/10；Ordinary 10/10、C2C 8/10，中位耗時 1.92 倍，淨額度效益與顧問入口額度歸屬未知。詳見[真實使用報告](C2C_REAL_ACCEPTANCE.md)，不宣稱安全認證。
 - 只准明確標記為 `public` 或 `non-sensitive` 的內容進入此 local workflow；病人資料、院內機密、憑證、歸屬不明、未知來源或未分類敏感資料一律禁止。
 - 檔名 denylist 與 credential scanner 不是非敏感證明；必須逐一 inspect 每個 before/after，任何不確定即停止。
@@ -22,7 +22,7 @@
 
 - 上游固定基線：`b1481c0`。普通 workflow 不可自動 update、pull、stash、改 Codex config 或未核准的全域設定，也不可自行建立外部 connector/tunnel；外部 transport 僅在明確核准的批次內由 `review run` 執行，synthetic pilot 為獨立歷史路徑。
 - package manager 已 pin 為 `11.19.0`，SDK 為 `1.30.0`。offline-cache install 的 trust-lockfile 只停用線上 metadata check，不是新鮮 supply-chain audit。
-- 不要全域安裝 skill，不要使用或匯入舊 `setup`、`start`、`doctor`、`update`、`sandbox-allow` helpers。所有 legacy tools 不屬於此流程，且在 action 前拒絕。
+- 全域入口只在使用者明確要求本次任務使用 C2C 時路由；不要使用或匯入舊 `setup`、`start`、`doctor`、`update`、`sandbox-allow` helpers。所有 legacy tools 不屬於此流程，且在 action 前拒絕。
 - snapshot 在 prepare 時固定 Git HEAD 與目前安全文字，保存 before/after；MCP 後續不重讀 live repository。
 
 ## 目前狀態
@@ -43,9 +43,13 @@
 
 ### 啟動約定
 
-在本專案說 `C2C`，即由 Codex 對目前任務執行上述既定流程；它是 project-local codename，不是全域 `/c2c` 指令，也不是外部連線、帳號設定或付費使用的授權。Codex 可以在適合時主動建議 C2C，但不可默默套用到普通工作。
+使用者明確說「用 C2C 做……」後，由 Codex 對目前任務執行上述既定流程；「用c2c幫我……」與「這題交給C2C」同樣有效，C2C 不分大小寫，`$c2c` 只是可選捷徑。單純提到、詢問、引用／程式碼／文件中的 C2C，或說「不要用 C2C」，都不啟動；skill discovery 也不等於 workflow activation。全域入口可從任何專案路由到維護中的 checkout，但不是 shell PATH command，也不是外部連線、帳號設定或付費使用的授權。詳見[使用說明](C2C_USAGE.md)與[全域入口 source](../skill/global-entry/SKILL.md)。
 
 任何 system、connection、auth、cost 或 scope 擴張，必須在 action-time 取得一個真實合併 gate；同一已核准批次內不重複追問。內容、目的地、權限、model、限制或 round 超出批次時，才重開 gate。此原則不把 synthetic external trial 變成 G7 pass，也不免除真實 consent。
+
+### 跨專案全域薄入口
+
+全域入口的來源、安裝、target routing 與權限邊界見[使用說明](C2C_USAGE.md)及[全域入口 source](../skill/global-entry/SKILL.md)；本指南既有 snapshot、approval、撤權與 cleanup 規則不變。
 
 ### Synthetic trial scripts
 

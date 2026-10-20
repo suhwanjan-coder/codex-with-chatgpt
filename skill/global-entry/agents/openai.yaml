@@ -1,0 +1,7 @@
+interface:
+  display_name: "C2C"
+  short_description: "Recognize requests to use C2C in ordinary language"
+  default_prompt: "Use $c2c to run the bounded C2C workflow for this task."
+
+policy:
+  allow_implicit_invocation: true

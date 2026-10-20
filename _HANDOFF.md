@@ -1,4 +1,46 @@
-# 2026-08-31 | Windows release checkout | Codex
+# 2026-09-01 | Windows release checkout | Codex
+
+## Latest Status: Natural-Language Entry Corrected (2026-09-01 00:22, ACHIH-MAIN, Codex)
+After the memory-only handoff, the user asked to continue. The explicit opt-in
+global entry is now installed at `C:\Users\suhwa\.codex\skills\c2c` on this
+machine. The user corrected the interface requirement: ordinary requests such as
+"用 C2C 做...", "用c2c幫我...", or "這題交給 C2C" must work without a special
+command. `$c2c` is optional, not a requirement. Both skill metadata files now use
+allow_implicit_invocation: true for language-based discovery; workflow execution
+still requires the user's explicit current-task C2C intent. Questions, quotations,
+negations and ordinary tasks do not start it. Ordinary stays the default. No PATH,
+Codex settings, runtime code, external connection, or old machine was changed.
+
+Do not confuse a technical entrypoint check with acceptance of the user's actual
+working style. The user explicitly said our conversation still fails to connect
+after many projects: requiring a special command repeated that mismatch. Use his
+natural wording and existing context; do not make him learn internal terminology.
+
+The installed SKILL.md and agents/openai.yaml come from `skill/global-entry/`;
+adjacent `implementation.json` binds this checkout as the implementation. Do not
+copy that host binding to another machine. The router preserves the caller or
+explicit target Git root and passes an absolute --workspace; it never silently
+uses the implementation as the review target. Existing data approval, snapshot,
+ACL, revocation, and cleanup boundaries remain unchanged.
+
+Verification: independent review passed after two corrections (atomic installation
+and no additional classification questionnaire). Three installed files matched
+staged SHA-256. Native Codex skills/list found exactly one enabled user-scope c2c
+in this checkout and in the unrelated `_scratch` workspace, with no C2C parsing
+errors. Cross-repository local prepare/inspect and two rejection cases passed,
+including the native private-file ACL check. Evidence: `_working/global-entry-smoke/`.
+The optional Python quick_validate helper lacked PyYAML; native catalog loading
+was verified instead. The September 1 correction has a separate eight-scenario
+independent trigger review and fresh native catalog records under
+`_working/c2c-natural-language-2026-09-01/`; old payload hashes/policy in the
+August 31 installation record are historical, not current. No remote review or
+new external benchmark was run.
+
+This narrow global-entry installation supersedes the earlier blanket prohibition
+for this entry only. Do not re-ask whether cross-project invocation is wanted.
+Published repair baseline: b6b71dc3c11b05c2aec0571e009b8a181e5d47ab.
+The global-entry source/docs and this handoff are local, not committed/pushed or
+part of that published commit/cloud manifest. The old machine remains unverified.
 
 ## 1. Goal And Scope
 Deliver usable, opt-in C2C for controlled non-sensitive repositories and finish
@@ -68,7 +110,7 @@ From this checkout with Node>=20 and the package.json-pinned pnpm installed:
 See cross-machine setup before installing on a new host.
 
 ## 7. Unsafe Or Flaky
-No legacy setup/start/sandbox helpers, global skill install, permanent tunnel,
+No legacy setup/start/sandbox helpers, automatic global activation, permanent tunnel,
 paid API, or patient/hospital/credential disclosure. Never sync tokens, auth
 state, node_modules or active session directories. Revocation does not erase
 already received ChatGPT data. Never resend an uncertain external request.
@@ -77,16 +119,19 @@ diagnostic full reruns passed. Root cause remains unconfirmed; preserve the
 failed evidence and do not disable storage checks. See the repair report.
 
 ## 8. Next Action
-Continue normal on-demand use of the repaired workflow. Check the repair report,
-cloud release-manifest.json and remote branch for final verification and
-publication status. Do not reopen the completed comparison or require old-machine
-work. If the intermittent storage failure recurs, capture bounded local process
+Accept the user's natural-language request to use C2C for the next actual task;
+do not ask them to rewrite it as `$c2c`. If the current app catalog is stale,
+reload or open a fresh task; do not reinstall or modify global settings implicitly.
+The local global-entry changes are not yet published; publication is separate from
+the completed local installation. Do not reopen the completed comparison or
+require old-machine work. If the intermittent storage failure recurs, capture bounded local process
 metadata and investigate before claiming its cause is fixed.
 Use a fresh task-bound connection when C2C is requested. Do not assume browser
 login, connector state or installed tooling transferred with documents.
 
 ## 9. User Preferences
-Traditional Chinese, concise reports. One keyword: C2C plus project/question.
+Traditional Chinese, concise reports. Natural-language C2C plus project/question;
+no required dollar prefix, slash command, mode selection or technical vocabulary.
 Execute within the approved envelope without repeated questions; new scope gets
 one combined approval. Integrate improvements into one coherent plan.
 
