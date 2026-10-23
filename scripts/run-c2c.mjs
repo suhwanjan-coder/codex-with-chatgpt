@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { parseSnapshot, snapshotDigest } from "../dist/review/snapshot.js";
 import { prepareRemoteReview, remoteReviewDigest, validateRemoteReview } from "../dist/review/remote-permit.js";
 import { ReviewSession } from "../dist/review/session.js";
-import { ensurePrivateDirectory, writePrivateNewFile } from "../dist/review/private-storage.js";
+import { ensurePrivateDirectory, privateStorageDiagnosticLine, writePrivateNewFile } from "../dist/review/private-storage.js";
 import { startBridge } from "../dist/bridge/server.js";
 import { CloudflaredQuickTunnel } from "../dist/tunnel/cloudflared.js";
 import { nullLogger } from "../dist/logger/index.js";
@@ -244,7 +244,7 @@ export async function runC2c(options, overrides = {}) {
     }) + "\n");
   } catch (error) {
     dependencies.processRef.exitCode = 1;
-    dependencies.writeError(String(error) + "\n");
+    dependencies.writeError(String(error) + "\n" + privateStorageDiagnosticLine(error));
     await stop();
   }
   return Object.freeze({ stop, closed, started: Boolean(bridge) });
@@ -256,6 +256,6 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     await runner.closed;
   } catch (error) {
     process.exitCode = 1;
-    process.stderr.write(String(error) + "\n");
+    process.stderr.write(String(error) + "\n" + privateStorageDiagnosticLine(error));
   }
 }

@@ -27,6 +27,7 @@ import {
 } from "../config/endpoint.js";
 import { PRODUCT_NAME, VERSION } from "../version.js";
 import { registerReviewCommands } from "./review.js";
+import { privateStorageDiagnosticLine } from "../review/private-storage.js";
 
 const program = new Command();
 
@@ -853,5 +854,7 @@ function handleCliError(error: unknown, json: boolean): void {
 
 program.parseAsync(process.argv).catch((error: Error) => {
   cross(error.message);
+  const diagnostic = privateStorageDiagnosticLine(error);
+  if (diagnostic) fs.writeSync(process.stderr.fd, diagnostic);
   process.exit(1);
 });
