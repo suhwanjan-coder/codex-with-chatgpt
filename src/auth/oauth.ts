@@ -391,7 +391,7 @@ export function createOAuthRouter(deps: OAuthDeps): Router {
         res.status(400).json({ error: "invalid_grant" });
         return;
       }
-      if (redirectUri && redirectUri !== record.redirectUri) {
+      if (redirectUri !== record.redirectUri) {
         res.status(400).json({ error: "invalid_grant", error_description: "redirect_uri mismatch" });
         return;
       }
