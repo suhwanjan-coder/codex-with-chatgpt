@@ -5,7 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const bundledNode = "C:\\Users\\suhwa\\.cache\\codex-runtimes\\codex-primary-runtime\\dependencies\\node\\bin\\node.exe";
 const helper = path.join(root, "scripts", "g7-windows-helper.ps1");
 const nonce = () => randomBytes(16).toString("hex");
 const hashFile = (file) => createHash("sha256").update(fs.readFileSync(file)).digest("hex");
@@ -94,17 +93,52 @@ export function noArgsResult(argv = process.argv) {
   return argv.length === 2 ? { ok: false, message: "Explicit external approval is required for --authorize-elevated-fixtures. No changes were made." } : null;
 }
 
+export function parseDriverArgs(argv = process.argv) {
+  if (argv[2] !== "--authorize-elevated-fixtures" ||
+      (argv.length !== 3 && (argv.length !== 5 || argv[3] !== "--node" || !argv[4]))) fail("ARGUMENTS");
+  return argv.length === 5 ? argv[4] : process.execPath;
+}
+
+export function validateNodeExecutable(nodePath = process.execPath) {
+  // Reject drive-relative, UNC/device paths and ADS before any filesystem access.
+  if (typeof nodePath !== "string" || !/^[A-Za-z]:[\\/]/.test(nodePath) || /[:\x00-\x1f]/.test(nodePath.slice(2))) fail("NODE_PATH");
+  const executable = path.win32.normalize(nodePath);
+  let stat;
+  try { stat = fs.lstatSync(executable); }
+  catch (error) { fail(error?.code === "ENOENT" ? "NODE_MISSING" : "NODE_STAT"); }
+  if (stat.isSymbolicLink()) fail("NODE_REPARSE");
+  if (!stat.isFile()) fail("NODE_NOT_FILE");
+  // Node's isSymbolicLink does not cover every Windows reparse tag. Check the
+  // native attribute on the file and every ancestor without running the helper.
+  const script = `$ErrorActionPreference='Stop'
+try {
+  $current=$env:G7_NODE_EXECUTABLE
+  while ($current) {
+    if (([IO.File]::GetAttributes($current) -band [IO.FileAttributes]::ReparsePoint) -ne 0) { [Console]::Out.Write('reparse'); exit 0 }
+    $current=[IO.Path]::GetDirectoryName($current)
+  }
+  [Console]::Out.Write('plain')
+} catch { exit 1 }`;
+  const attributes = spawnSync(path.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", script], {
+    encoding: "utf8", windowsHide: true, shell: false, timeout: 10_000,
+    env: { ...process.env, G7_NODE_EXECUTABLE: executable },
+  });
+  if (attributes.status !== 0 || attributes.error) fail("NODE_ATTRIBUTES");
+  if (attributes.stdout === "reparse") fail("NODE_REPARSE");
+  if (attributes.stdout !== "plain") fail("NODE_ATTRIBUTES");
+  try { return { path: executable, sha256: hashFile(executable) }; }
+  catch { fail("NODE_READ"); }
+}
+
 export async function main(argv = process.argv) {
   if (process.platform !== "win32") fail("WINDOWS_REQUIRED");
-  if (argv.length !== 3 || argv[2] !== "--authorize-elevated-fixtures") {
-    const result = noArgsResult(argv);
-    if (result) { process.stderr.write(`${result.message}\n`); process.exitCode = 2; return; }
-    fail("ARGUMENTS");
-  }
-  if (!fs.existsSync(bundledNode) || !fs.existsSync(helper)) fail("RUNTIME_OR_HELPER_MISSING");
+  const result = noArgsResult(argv);
+  if (result) { process.stderr.write(`${result.message}\n`); process.exitCode = 2; return; }
+  const nodeRuntime = validateNodeExecutable(parseDriverArgs(argv));
+  if (!fs.existsSync(helper)) fail("RUNTIME_OR_HELPER_MISSING");
   // Fresh production artifacts are mandatory before any review/session/AuthStore import.
-  run(bundledNode, ["node_modules/typescript/bin/tsc", "--noEmit"]);
-  run(bundledNode, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
+  run(nodeRuntime.path, ["node_modules/typescript/bin/tsc", "--noEmit"]);
+  run(nodeRuntime.path, ["node_modules/typescript/bin/tsc", "-p", "tsconfig.json"]);
   const fingerprints = runtimeFingerprint();
   const { ensurePrivateDirectory, writePrivateNewFile } = await import("../dist/review/private-storage.js");
   const { createSnapshot, snapshotDigest } = await import("../dist/review/snapshot.js");
@@ -121,6 +155,8 @@ export async function main(argv = process.argv) {
     // This is intentionally the first fixture operation: no manifest or artifact precedes private-root creation.
     ensurePrivateDirectory(fixture);
     assertPlainDirectory(fixture, tooling);
+    // Preserve executable provenance after the native fixture is cleaned up.
+    writeNew(path.join(tooling, `g7-node-runtime-${valueNonce}.json`), JSON.stringify({ schemaVersion: 1, nonce: valueNonce, nodeRuntime }, null, 2) + "\n");
     const hardened = path.join(fixture, "hardened-repo");
     const legacy = path.join(fixture, "legacy-repo");
     const outside = path.join(fixture, "outside");
@@ -177,15 +213,17 @@ export async function main(argv = process.argv) {
     const legacySymlink = path.join(legacy, "outside-file-link.txt");
     const otherReparse = path.join(hardened, "other-reparse");
     const evidence = {
-      schemaVersion: 1, nonce: valueNonce, root: fixture, evidenceExpiresAt, manifest, manifestSha256: hashFile(manifest), helperResult,
+      schemaVersion: 1, nonce: valueNonce, root: fixture, evidenceExpiresAt, manifest, manifestSha256: hashFile(manifest), helperResult, nodeRuntime,
       artifacts: { snapshot: artifacts.snapshot, auth: artifacts.auth, state: artifacts.state, audit: artifacts.audit, lock: artifacts.lock, fileSymlink: { path: fileSymlink, sha256: artifacts.outside.sha256 }, legacySymlink: { path: legacySymlink, sha256: artifacts.outside.sha256 }, otherReparse: { path: otherReparse } },
       native: { adsPath, adsSha256: hashFile(adsPath), longPath, longPathOutcome: longPathOutcome(createSnapshot, hardened, longPath.relative), shortSource, shortAlias: helperData.shortAlias, junction: helperData.junction },
       snapshotRejections: { ads: rejection(createSnapshot, hardened, "approved.txt:g7-native-ads"), ancestorJunction: rejection(createSnapshot, hardened, "nested/redirect/outside.txt"), fileSymlink: rejection(createSnapshot, hardened, "outside-file-link.txt"), legacySymlink: rejection(createSnapshot, legacy, "outside-file-link.txt"), shortAlias: rejection(createSnapshot, hardened, helperData.shortAlias.relative), otherReparse: rejection(createSnapshot, hardened, "other-reparse") }, helper: helperData,
     };
     const evidenceFile = path.join(fixture, "native-evidence.json"); writeNew(evidenceFile, JSON.stringify(evidence, null, 2) + "\n");
-    const verify = spawnSync(bundledNode, [path.join(root, "scripts", "verify-g7.mjs")], { cwd: root, encoding: "utf8", windowsHide: true, shell: false, timeout: 600_000, env: { ...process.env, C2C_G7_NATIVE_EVIDENCE: evidenceFile, C2C_G7_NATIVE_NONCE: valueNonce } });
+    if (validateNodeExecutable(nodeRuntime.path).sha256 !== nodeRuntime.sha256) fail("NODE_CHANGED");
+    const verify = spawnSync(nodeRuntime.path, [path.join(root, "scripts", "verify-g7.mjs")], { cwd: root, encoding: "utf8", windowsHide: true, shell: false, timeout: 600_000, env: { ...process.env, C2C_G7_NATIVE_EVIDENCE: evidenceFile, C2C_G7_NATIVE_NONCE: valueNonce } });
     process.stdout.write(verify.stdout ?? ""); process.stderr.write(verify.stderr ?? "");
     if (verify.status !== 0 || verify.error) fail(`VERIFY_${verify.error?.code ?? verify.status ?? "unknown"}`);
+    if (validateNodeExecutable(nodeRuntime.path).sha256 !== nodeRuntime.sha256) fail("NODE_CHANGED");
     if (JSON.stringify(runtimeFingerprint()) !== JSON.stringify(fingerprints)) fail("RUNTIME_FINGERPRINT_CHANGED");
     success = true;
   } finally {
