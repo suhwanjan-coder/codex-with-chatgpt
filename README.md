@@ -15,7 +15,7 @@
 > See [cross-machine setup](docs/C2C_CROSS_MACHINE.md) for this fork's install route.
 > In the fork checkout on Windows PowerShell, set `$env:CI='true'` before running
 > `corepack pnpm install --frozen-lockfile`, `corepack pnpm build`, and `corepack pnpm test`.
-> Bare `pnpm` need not be on PATH; the local store is `.tooling/pnpm-store`. CI mode
+> Bare `pnpm` need not be on PATH. pnpm 11.19.0 ignores the `.npmrc` `store-dir` line (observed 2026-10-23) and uses the per-user store. CI mode
 > permits replacing dependencies from a different store in a non-interactive install.
 > See the [real-use report](docs/C2C_REAL_ACCEPTANCE.md). No security certification
 > or general performance advantage is claimed; synthetic evidence stays separate.

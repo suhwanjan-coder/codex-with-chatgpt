@@ -21,7 +21,7 @@
 ## 基線與不可做的事
 
 - 上游固定基線：`b1481c0`。普通 workflow 不可自動 update、pull、stash、改 Codex config 或未核准的全域設定，也不可自行建立外部 connector/tunnel；外部 transport 僅在明確核准的批次內由 `review run` 執行，synthetic pilot 為獨立歷史路徑。
-- package manager 已 pin 為 `11.19.0`，SDK 為 `1.30.0`。先前 offline-cache install 的 trust-lockfile 說明屬歷史安裝紀錄，不是目前設定；目前依 `.npmrc` 的 `.tooling/pnpm-store` 與 `pnpm-workspace.yaml` 的 `esbuild` 建置允許設定安裝，見[跨機接手](C2C_CROSS_MACHINE.md)。
+- package manager 已 pin 為 `11.19.0`，SDK 為 `1.30.0`。先前 offline-cache install 的 trust-lockfile 說明屬歷史安裝紀錄，不是目前設定；目前依 `pnpm-workspace.yaml` 的 `esbuild` 建置允許設定安裝（`.npmrc` 的 `store-dir` 經 2026-10-23 實測不被 pnpm 11.19.0 採用），見[跨機接手](C2C_CROSS_MACHINE.md)。
 - 全域入口只在使用者明確要求本次任務使用 C2C 時路由；不要使用或匯入舊 `setup`、`start`、`doctor`、`update`、`sandbox-allow` helpers。所有 legacy tools 不屬於此流程，且在 action 前拒絕。
 - snapshot 在 prepare 時以 Git HEAD 為預設 base；可用 `--base <完整 commit OID>` 指定歷史 commit，before 來自該 base、after 來自目前安全文字。MCP 後續不重讀 live repository。
 

@@ -46,7 +46,7 @@ C2C 可按需使用，個人實用性 7/10；不是全域預設，也不是保�
    ```
 
    2026-10-23 本機 `pnpm` 不在 PATH，`corepack pnpm` 可用（11.19.0）。已有相符 pnpm 時也可使用 `pnpm`，但非互動執行仍先設 `CI=true`。
-   `.npmrc` 將 store 固定為 `.tooling/pnpm-store`；若舊 `node_modules` 來自不同 store，沒有 TTY 且未設 CI 時，重新安裝會以 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止。
+   `.npmrc` 雖寫有 `store-dir=.tooling/pnpm-store`，2026-10-23 實測 pnpm 11.19.0 不採用（`pnpm config get store-dir` 回 `undefined`，實際 store 在使用者層 `AppData\Local\pnpm\store`）。若舊 `node_modules` 來自不同 store，沒有 TTY 且未設 CI 時，重新安裝會以 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止。
    `CI=true` 允許 pnpm 移除並重建該依賴目錄；不改 lockfile 或全域 store 設定。`pnpm-workspace.yaml` 僅明確允許 `esbuild` 的建置腳本。
    缺工具就先補齊；不要為了套用這些指令而默默修改全域設定。實際測試結果取代舊紀錄，跳過不算通過。
 

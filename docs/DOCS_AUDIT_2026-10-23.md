@@ -81,7 +81,7 @@ and `tests/review-cli.test.ts:94`.
 | typecheck | `tsc --noEmit` | `package.json:20` |
 | engines.node / packageManager | `>=20` / `pnpm@11.19.0` | `package.json:9`; `package.json:22` |
 | MCP SDK | `1.30.0` | `package.json:24` |
-| pnpm store | `.tooling/pnpm-store` | `.npmrc:1` |
+| pnpm store | `.npmrc:1` declares `.tooling/pnpm-store`, but pnpm 11.19.0 does not apply it: `corepack pnpm config get store-dir` -> `undefined`; `node_modules/.modules.yaml` `storeDir` is the per-user `AppData\Local\pnpm\store\v11` (reviewer correction 2026-10-23) | `.npmrc:1`; `node_modules/.modules.yaml:511` |
 | allowed dependency builds | `esbuild: true` | `pnpm-workspace.yaml:1` |
 
 Observed executable versions: `node --version` -> `v24.19.0`;
