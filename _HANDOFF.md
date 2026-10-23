@@ -1,3 +1,35 @@
+# 2026/10/23 19:00 | ACHIH-MAIN | Claude Opus 5.5（主 session）— 第二批收尾
+
+### 狀態
+- 已 push：0baa30d（阿志核准，git ls-remote 核對）。雲端 release-manifest.json 已記 0baa30d（payload 檔仍為 b6b71dc 版，已註明）。
+- **本機另有 6 個 commit 未 push**，HEAD b09e948：85875f6 高負載調查合併、46d8071 小修正合併、b09e948 測試修正。push 需再問阿志。
+- 阿志已開 Windows Developer Mode（AllowDevelopmentWithoutDevLicense=1），5 個 symlink 測試實跑通過，之後應為 0 跳過。
+
+### 第二批做了什麼
+- 高負載調查（Codex gpt-6-astra high，分支 codex/wt-load-20261023）：11 項逐一分類（Vitest 逾時 43、測試內子程序逾時 8 等），
+  修測試預算與子程序生命週期，CLI／runner 補不含內容的儲存診斷；同參數壓測 52 失敗→0；Codex 端兩次全套 461/0/0。
+  產品 PowerShell 上限維持 10 秒、不重試。文件：docs/C2C_LOAD_FAILURES_2026-10-23.md。
+- 小修正（Codex，codex/wt-misc-20261023）：MCP read_file／review_diff 說明改為 pinned base commit；
+  verify-g7-windows.mjs 不再寫死維護者 Node 路徑，改 process.execPath＋可選 --node，驗證路徑並記錄 SHA-256。
+  主 session 核對 baseline：該 Node 只用於非提權的 tsc／verify-g7，提權端只跑 PowerShell。
+- 主 session 修 tests/storage-stress-reporter.test.ts（b09e948）：vitest worker 的 env 同時有
+  PSEXECUTIONPOLICYPREFERENCE=Bypass 與 PSExecutionPolicyPreference，只覆寫一種大小寫會讓子程序繼承 Bypass，
+  Restricted 對照組失效；改為先刪所有大小寫再設，斷言改「父值不變」。單檔在有／無繼承 Bypass 兩種環境都過。
+
+### 未完成：整合後 HEAD 的乾淨完整測試
+- 18:20–19:00 其他專案（star-ride-5 等）同時跑大量 Codex，CPU 100%、約 85 個 codex/node 程序（非本專案，未動）。
+  整合後完整測試三次都有逾時型失敗：481/1/8（mcp-integration hook 逾時連帶 8 跳過）、476/14/0、單 worker 479/11/0；
+  失敗皆為 15–104 秒逾時或 5 秒 PowerShell 上限，集中在 g7-windows-driver、c2c-runner、review-security。
+- 下一步：機器閒置時（預期 10/24 01:00 Codex 額度重置、其他專案停下後）在本 checkout 跑：
+  `$env:CI='true'; corepack pnpm exec vitest run` 兩次，期望 490 項全過 0 跳過；過了再問阿志 push 6 個 commit，並更新 manifest。
+- 若閒置下仍失敗：先看是否仍是逾時；非逾時才視為真回歸，對照 vitest-final-*.json（_working/codex-20261023/）。
+
+### 不要重試
+- 在 bash heredoc／sed 寫含 Windows 路徑的 TS 探測檔：反斜線被吃（ENOENT）。用 Write 工具。
+- 交辦時寫「每個測試 <10 秒」會讓 worker 設過緊的自訂 timeout。
+
+---
+
 # 2026/10/23 15:20 | ACHIH-MAIN | Claude Opus 5.5（主 session，前段 Fable 5.1）
 
 ## 已完成：依 _CODEX_BRIEF_20261023.md 派 Codex（gpt-6-astra high）做三件事，審查後併入本機發布分支
@@ -41,6 +73,8 @@
 1. 是否 push 本機分支到 GitHub（含 625053d 與今天全部 commit）；push 後才更新雲端 release-manifest.json。
 2. 是否開 Windows Developer Mode 讓 5 個 symlink 測試真正執行（全機設定，見 WINDOWS_SYMLINK_SKIPS 文件）。
 3. 10 秒上限下仍有的 11 項重負載失敗，要不要另開調查。
+
+- 2026/10/23 17:10 後續：已 push 0baa30d（git ls-remote 核對）；雲端 manifest 更新為 0baa30d（payload 檔仍為 b6b71dc 版，已註明）。阿志開了 Developer Mode（AllowDevelopmentWithoutDevLicense=1），5 個 symlink 測試實跑通過、0 跳過。高負載調查（Codex，wt-load）已併入本機分支 85875f6：同參數壓測 52 失敗→0、兩次全套 461/0/0；未 push。另一路 Codex（wt-misc：MCP 工具說明 before≠HEAD、verify-g7-windows 寫死 Node 路徑）仍在跑，只准跑相關測試檔。兩路結束後：審 misc、合併、閒置時跑兩次全套、更新雲端 _HANDOFF／manifest，再一起報告阿志；push 需再問。
 
 ### 7. 擱置
 - 舊機九項空輸出重驗：需要 LAPTOP-4Q87TNH8，本輪未做。
@@ -207,3 +241,4 @@ failure.
 
 - 2026/10/23 14:45 整合：本機 codex/c2c-hardened-2026-08-31 已 merge 工作 A（ffd883b）、B（b160051），cherry-pick 工作 C 全部 5 commit（含 OAuth 05f5e5b：review 模式 oauth.ts:403 早已強制 redirect_uri、十次真實連線成功，修正只影響已停用的舊路徑，故收）；build 通過；兩次完整測試在背景跑（scratchpad vitest-final-1/2.log）。未 push。worktree 三個與分支 codex/wt-* 尚未移除。
 - 2026/10/23 14:58 整合後第一輪兩次完整測試：440/0/5 過、439/1/5（工作 C 新測試 aggregate byte cap 自設 9 秒上限，實測 6.3 與 9.7 秒）；已移除 3 個建 git repo 測試的 9 秒上限改用預設 30 秒（3acdd7e，斷言不變），正在背景重跑兩次（scratchpad vitest-final-3/4）。
+- 2026/10/23 18:15 misc 已併入（46d8071）。整合後兩次全套各有失敗：storage-stress-reporter 的 Restricted 對照組在 vitest worker 失效——worker env 同時有 PSEXECUTIONPOLICYPREFERENCE=Bypass 與 PSExecutionPolicyPreference，只覆寫一種大小寫會讓子程序繼承 Bypass；已改為先刪所有大小寫再設 Restricted、並改斷言父值不變（b09e948），單檔兩種環境皆過。另一項 g7-windows-driver native preflight 只在第二次逾時 38 秒（單跑通過，疑負載）。正在背景重跑兩次全套（scratchpad vitest-final-7/8）。未 push（origin 停在 0baa30d，本機多 6 個 commit）。
