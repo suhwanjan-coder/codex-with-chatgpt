@@ -9,6 +9,8 @@ C2C 可按需使用，個人實用性 7/10；不是全域預設，也不是保�
 `_HANDOFF.md`、[使用說明](C2C_USAGE.md)、`skill/SKILL.md` 及
 `docs/C2C_REPAIR_2026-08-31.md`。修復後測試結果與版本以該修復文件
 及雲端 `release-manifest.json` 的實際記錄為準；manifest 不在 Git checkout 內。
+2026-10-23 補註：上述為 2026-08-31 修復紀錄；本次文件稽核與驗證另見
+[文件稽核](DOCS_AUDIT_2026-10-23.md)，歷史測試數字不代表目前測試總數。
 
 ## 版本與位置
 
@@ -34,8 +36,18 @@ C2C 可按需使用，個人實用性 7/10；不是全域預設，也不是保�
    乾淨且已在上述分支時，才 `git pull --ff-only`。用 `git rev-parse HEAD` 對照交接 manifest；若遠端已有後續提交，先讀其交接再繼續。
 
 2. 在本機 checkout 安裝 `package.json` 的 `packageManager` 所固定版本，不升級 lockfile。
-   已有 Corepack 時可用 `corepack pnpm install --frozen-lockfile`、`corepack pnpm build`、`corepack pnpm test`。
-   已有相符 pnpm 時使用 `pnpm install --frozen-lockfile`、`pnpm build`、`pnpm test`。
+   Windows PowerShell 的非互動執行先設定 `$env:CI='true'`，再依序執行：
+
+   ```powershell
+   $env:CI='true'
+   corepack pnpm install --frozen-lockfile
+   corepack pnpm build
+   corepack pnpm test
+   ```
+
+   2026-10-23 本機 `pnpm` 不在 PATH，`corepack pnpm` 可用（11.19.0）。已有相符 pnpm 時也可使用 `pnpm`，但非互動執行仍先設 `CI=true`。
+   `.npmrc` 將 store 固定為 `.tooling/pnpm-store`；若舊 `node_modules` 來自不同 store，沒有 TTY 且未設 CI 時，重新安裝會以 `ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY` 中止。
+   `CI=true` 允許 pnpm 移除並重建該依賴目錄；不改 lockfile 或全域 store 設定。`pnpm-workspace.yaml` 僅明確允許 `esbuild` 的建置腳本。
    缺工具就先補齊；不要為了套用這些指令而默默修改全域設定。實際測試結果取代舊紀錄，跳過不算通過。
 
    本次 maintainer 新機 baseline 是真正 fresh 的短路徑 clone，起初沒有
@@ -55,8 +67,10 @@ C2C 可按需使用，個人實用性 7/10；不是全域預設，也不是保�
    失敗巢狀目標為 261 字元。這是歷史可攜性觀察，不是舊機 11 項失敗的解釋。
    較深的 Documents clone 曾有 48 項私有儲存相關失敗；原始紀錄保留，不算驗收通過。
 
-3. 讀 `skill/SKILL.md`，保持專案內使用。核對 `node bin/c2c.js review run --help`。
-   真正執行遠端 C2C 前，另外核對 cloudflared、瀏覽器登入、精確快照和目的地批准；連線一律重新建立，完成後撤權及關閉。
+3. 讀 `skill/SKILL.md`，預設保持專案內使用。核對 `node bin/c2c.js review run --help`。
+   若另行安裝跨專案薄入口，使用 `skill/global-entry/`，並建立該機專用的 `implementation.json`；不要直接複製他機路徑或把整份 workflow 當作薄入口。詳見[使用說明](C2C_USAGE.md)。
+   真正執行遠端 C2C 前，另外核對瀏覽器登入、精確快照和目的地批准；連線一律重新建立，完成後撤權及關閉。
+   `review run` 不使用 PATH 中任意版本的 cloudflared；它要求 checkout 內 `.tooling/downloads/cloudflared-2026.8.2-windows-amd64.exe`，並核對[操作指南](HARDENED_REVIEW.md#synthetic-trial-scripts)所列 SHA-256。單純安裝最新版不滿足這個條件；此 runner 目前限定該 Windows 執行檔。
 
 ## 不同步的內容
 

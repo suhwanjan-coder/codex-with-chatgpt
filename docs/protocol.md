@@ -1,5 +1,7 @@
 # C2C Agent Protocol
 
+> Historical upstream protocol, retained for context. This fork does not run the planning loop, `c2c record`, or `c2c session`; `maxIterations` does not enable them. Use the single approved snapshot workflow in [the current operating guide](HARDENED_REVIEW.md) and [the current skill](../skill/SKILL.md). Do not send the historical boot prompt below as this fork's instructions.
+
 Control plane: Computer Use (tiny structured messages typed into the ChatGPT UI).
 Data plane: MCP (ChatGPT pulls files, diffs, search results itself).
 

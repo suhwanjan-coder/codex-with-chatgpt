@@ -52,6 +52,8 @@ latest handoff for current evidence and blocking facts.
 5. For the real remote workflow, run `node bin/c2c.js review run --help`, then
    launch with the reviewed snapshot, model, dedicated external state directory,
    `--authorize-external-review`, and `--reviewed-snapshot <snapshot-sha256>`.
+   The runner requires the pinned Windows cloudflared binary under this checkout,
+   not an arbitrary PATH installation; see [cross-machine setup](../docs/C2C_CROSS_MACHINE.md).
    Only after verifying the emitted resource/permit against actual batch consent,
    send `approve <permitDigest>` on stdin. The route serves no data before approval.
 6. Connect ChatGPT using the emitted OAuth pairing data. Reload a ChatGPT draft

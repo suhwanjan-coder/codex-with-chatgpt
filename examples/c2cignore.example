@@ -1,4 +1,5 @@
-# .c2cignore — gitignore syntax; these paths become invisible to ChatGPT.
+# .c2cignore — gitignore syntax; matching paths are rejected during snapshot preparation.
+# Later edits do not alter an existing snapshot or erase content already disclosed.
 # Sensitive defaults (.env, keys, credentials, SSH…) are always enforced
 # even without this file.
 

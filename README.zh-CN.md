@@ -1,5 +1,7 @@
 # Codex with ChatGPT
 
+> 2026-10-23 fork note: all upstream setup examples below are historical. For current Windows installation, use [the fork guide](docs/C2C_CROSS_MACHINE.md): set `$env:CI='true'` in PowerShell and invoke `corepack pnpm`. Quota statements below reflect the 2026-08-31 report, not a new verification.
+
 > **C2C 可按需使用；十组完整流程比较已完成。**
 > 用户只需使用一个关键词 `C2C`；请先阅读 [C2C 使用说明](docs/C2C_USAGE.md) 和
 > [目前操作指南](docs/HARDENED_REVIEW.md)。

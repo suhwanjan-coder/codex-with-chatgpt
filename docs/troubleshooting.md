@@ -1,5 +1,7 @@
 # Troubleshooting
 
+> Historical upstream troubleshooting only. The `doctor`, `start`, `pair`, `unpair`, `logs`, `stop`, `setup`, and `sandbox-allow` commands below are disabled in this fork; they cannot repair a review session. Use [cross-machine setup](C2C_CROSS_MACHINE.md) for installation and [the current operating guide](HARDENED_REVIEW.md) for snapshot inspection and cleanup. An uncertain send must not be retried automatically.
+
 First move, always:
 
 ```

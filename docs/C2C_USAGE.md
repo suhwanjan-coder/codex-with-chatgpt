@@ -11,7 +11,7 @@
 ## 全域入口
 
 2026-08-31 已在 ACHIH-MAIN 安裝，並確認兩個不同工作目錄都能找到此技能。
-如果目前技能清單尚未更新，重新載入或開新任務即可；這不代表其他電腦也已安裝。
+這是當時的安裝紀錄，不代表目前或其他電腦已安裝；Git clone 也不會安裝全域入口。已安裝但技能清單尚未更新時，可重新載入或開新任務。
 本機檔案位置可用 `Test-Path "$env:USERPROFILE\.codex\skills\c2c\SKILL.md"` 檢查。
 
 入口只包含 `SKILL.md`、`agents/openai.yaml` 與 `implementation.json` 三個檔案。

@@ -10,8 +10,13 @@
 > Ten real ChatGPT cases completed with scoped reads and verified cleanup.
 > Personal-use score: 7/10. Ordinary passed 10/10, C2C 8/10; C2C median time was
 > 1.92x Ordinary. Net Codex quota savings and the advisor's quota pool were not measured.
-> ChatGPT Work shares Codex usage; switching websites alone does not establish savings.
+> The 2026-08-31 report records shared ChatGPT Work/Codex usage; current quota rules
+> were not rechecked in this documentation audit. Switching websites alone does not establish savings.
 > See [cross-machine setup](docs/C2C_CROSS_MACHINE.md) for this fork's install route.
+> In the fork checkout on Windows PowerShell, set `$env:CI='true'` before running
+> `corepack pnpm install --frozen-lockfile`, `corepack pnpm build`, and `corepack pnpm test`.
+> Bare `pnpm` need not be on PATH; the local store is `.tooling/pnpm-store`. CI mode
+> permits replacing dependencies from a different store in a non-interactive install.
 > See the [real-use report](docs/C2C_REAL_ACCEPTANCE.md). No security certification
 > or general performance advantage is claimed; synthetic evidence stays separate.
 > The upstream instructions below are retained as historical context, not runnable
@@ -47,6 +52,8 @@ workspace.
 Detailed docs below are in English · 详细中文文档见 **[README.zh-CN.md](README.zh-CN.md)**
 
 ## One-paste install · 一段话安装
+
+> Historical upstream instructions only. For this fork, use [cross-machine setup](docs/C2C_CROSS_MACHINE.md); the legacy commands below are disabled.
 
 **中文** — 不懂 git、Node、终端？完全不需要懂。把下面这段话原样复制给你的
 编码 Agent（Codex），然后去倒杯咖啡：
@@ -111,6 +118,8 @@ anytime. / Skill 每天自动检查一次 GitHub，有新版本会自动更新�
 [README.zh-CN.md](README.zh-CN.md)。*
 
 ## Install → Setup → Use (manual)
+
+> Historical upstream instructions only. For this fork, use [cross-machine setup](docs/C2C_CROSS_MACHINE.md); the legacy commands below are disabled.
 
 1. Install the Codex Skill: copy `skill/` to `~/.codex/skills/codex-with-chatgpt/`.
 2. Tell Codex: **"Set up Codex with ChatGPT."** (中文: "使用 Codex with ChatGPT 完成首次配置。")
@@ -188,6 +197,8 @@ The only step that may need you: logging into ChatGPT (and nothing else).
 Full threat model: [docs/security.md](docs/security.md)
 
 ## For developers
+
+> Historical upstream instructions only. For this fork, use [cross-machine setup](docs/C2C_CROSS_MACHINE.md); the legacy commands below are disabled.
 
 ```bash
 pnpm install

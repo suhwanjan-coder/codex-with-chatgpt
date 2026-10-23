@@ -4,13 +4,15 @@
 
 ## 可重跑入口
 
+2026-10-23 補註：本文件的 260-test pass 與主機能力是 2026-08-30 歷史紀錄，不是目前 checkout 的重新驗收。Windows 無 pnpm PATH 時用 `corepack pnpm` 取代下列 `pnpm`，非互動執行先設 `$env:CI='true'`；一般測試結果另見[文件稽核](DOCS_AUDIT_2026-10-23.md)。
+
 先執行 `node scripts/g7-preflight.mjs`，或 `pnpm test:g7:preflight`。此預檢只檢查Windows／Node／Git、實際file symlink能力及探測檔清理，另列出隔離工具與Windows功能查詢結果；不啟動VM、不連外、不安裝軟體、不修改帳號／ACL／系統權限。它會短暫建立專案內的合成探測檔，結束時清理。
 
 預檢exit0只表示這些執行前提通過，不代表G7通過；必要能力不足／無法確認回exit2，非預期錯誤回exit1。`OTHER_REPARSE`及`ACL_ISOLATION`仍須正式驗收。不要以預檢綠燈批准C2C或G8。
 
 在此 checkout 使用 `node scripts/verify-g7.mjs`，或 `pnpm test:g7`。入口重新 typecheck、build、跑全部 tests，保存 `.tooling/g7/run-*/vitest.json` 與 `gate.json`。exit1 可表示程式缺陷，也可表示環境缺乏必要能力；看 `reasons` 分辨，不能只看一般 Vitest exit0。
 
-另有 Codex 內部入口 `pnpm test:g7:windows-native`，對應 `scripts/verify-g7-windows.mjs`。未帶明確授權旗標時不建立 fixture、不提權、不建立帳號。它不是新的使用者口令，你仍只需交辦「C2C」。已驗流程先以同一 normal Windows user 執行 `ValidateOnly` preflight，再取得 UAC 同意；不得全域設定 Git `safe.directory`。
+另有 Codex 內部入口 `pnpm test:g7:windows-native`，對應 `scripts/verify-g7-windows.mjs`。此 native driver 仍使用 `scripts/verify-g7-windows.mjs` 中固定的維護者 Node 路徑，換機時須先核對，不是跨機通用入口。未帶明確授權旗標時不建立 fixture、不提權、不建立帳號。它不是新的使用者口令，你仍只需交辦「C2C」。已驗流程先以同一 normal Windows user 執行 `ValidateOnly` preflight，再取得 UAC 同意；不得全域設定 Git `safe.directory`。
 
 【歷史證據】2026/08/30 22:57 的 `.tooling/g7/run-hrnoPh/` 為嚴格 G7 exit 1：28 個測試檔、252 項通過、0 項失敗、2 項 file symlink skipped；該失敗保留。
 
