@@ -202,6 +202,11 @@ export class Workspace {
       totalLines++;
       if (totalLines >= startLine && totalLines <= endLimit && !byteTruncated) {
         const cost = Buffer.byteLength(line, "utf8") + 1;
+        if (cost > maxBytes && lines.length === 0) {
+          rl.close();
+          stream.destroy();
+          throw new WorkspaceError("FILE_TOO_LARGE", `Line exceeds the response byte budget: ${rel}`);
+        }
         if (collectedBytes + cost > maxBytes && lines.length > 0) {
           byteTruncated = true;
         } else {
