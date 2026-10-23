@@ -1,3 +1,54 @@
+# 2026/10/23 15:20 | ACHIH-MAIN | Claude Opus 5.5（主 session，前段 Fable 5.1）
+
+## 已完成：依 _CODEX_BRIEF_20261023.md 派 Codex（gpt-6-astra high）做三件事，審查後併入本機發布分支
+
+### 1. 目前狀態
+- 分支 codex/c2c-hardened-2026-08-31，HEAD 3acdd7e，**全部只在本機，未 push**（origin 停在 b6b71dc；
+  625053d 自然語言入口那筆也還沒 push）。雲端 release-manifest.json 未改，仍記 b6b71dc，是發布紀錄不是現況。
+- 本機實測（整合後，靜止負載）：build 通過；完整測試兩次皆 445 項／440 過／0 失敗／5 跳過。
+  整合前基線：399 項／394 過／5 跳過（同日稍早），Codex 各自基線 404 項——差 5 條是條件式 describe，非退步。
+- 5 個跳過仍是 Windows file-symlink EPERM：本機沒開 Developer Mode、token 無 SeCreateSymbolicLinkPrivilege。
+
+### 2. 重要檔案
+- 新文件：`docs/C2C_AUTH_STORE_2026-10-23.md`（auth-store 壓力測試與 10 秒上限）、`docs/DOCS_AUDIT_2026-10-23.md`
+  （52 列文件稽核）、`docs/TEST_COVERAGE_2026-10-23.md`（76 項安全主張覆蓋矩陣）、`docs/WINDOWS_SYMLINK_SKIPS_2026-10-23.md`。
+- 壓力腳本：`scripts/stress-private-storage.mjs`（`node scripts/stress-private-storage.mjs --iterations N --workers W [--load 16]`）。
+- Codex 原始報告與證據封存：`_working/codex-20261023/{auth,docs,tests}/`（含 CODEX_REPORT_*.md），
+  另有 prompt-*.md、out-*.txt、vitest-final-1..4.json。工作 A 的 stdout：`_working/out-codex-auth-20261023.txt`（UTF-16LE）。
+
+### 3. 已完成與驗證
+- 工作 A（auth-store 偶發失敗）：PowerShell 私有儲存請求加上不含內容的診斷（timeout／spawn-error／非零退出／壞 JSON…），
+  逾時上限 5→10 秒，不重試（CreateNew 逾時後狀態不明）。8 workers＋16 條 PowerShell 負載 10 輪抓到 115 筆 ETIMEDOUT，
+  其中 7 筆就是 AUTH_STORE_UNAVAILABLE → 機制確認；8/31 那一次個案仍未證實（判定 PARTIALLY SUPPORTED）。
+  極端負載下仍有 11 項未分類失敗，不宣稱高負載問題全部排除。主 session 逐行審過 diff：PowerShell 安全腳本 SHA-256 前後相同，無檢查放寬。
+- 工作 B（文件 vs 行為）：27 處修正（WRONG 4／STALE 2／AMBIGUOUS 21）。主 session 抽查 4 項屬實，並自行修正 3 處
+  pnpm store 錯誤敘述（5feeba7：pnpm 11 不採用 .npmrc store-dir，`pnpm config get store-dir`=undefined）。
+- 工作 C（測試缺口）：新增 42 個測試，覆蓋 33→56 項；修 2 個缺陷：readFile 單一首行可超過 byte cap（15a8134）、
+  舊 OAuth 路徑換碼時可省略 redirect_uri（05f5e5b）。OAuth 修正一度擱置，查證 `src/auth/oauth.ts:403` review 模式早已強制比對，
+  十次真實連線都走 review 模式且成功 → 修正只影響已停用舊路徑，故收。
+- 主 session 修正：工作 C 三個建 git repo 的新測試自設 9 秒上限，實測 6.3／9.7 秒會超時 → 改用套件預設 30 秒（3acdd7e，斷言不變）。
+
+### 4. 決策與理由
+- 三個 worktree 平行跑 → 互相搶 CPU，各自完整測試都出現負載型失敗（B 21、C 44／3）；最終以整合後、無 Codex 負載時主 session 自跑兩次為準。
+- 工作 A 啟動被 Claude 自動模式分類器擋（Create Unsafe Agents），依 dispatch §4 不換寫法；由阿志本人執行 `_working/RUN_CODEX_AUTH_20261023.ps1`。
+
+### 5. 失敗過不要重試
+- 交辦寫「每個測試 <10 秒」會讓 worker 設太緊的上限；git-heavy 測試別設自訂 timeout。
+- 不要用 PowerShell `Remove-Item -Recurse` 刪 pnpm node_modules（junction）；用 `cmd /c rmdir /s /q`。
+- `*>` 重導的輸出是 UTF-16LE，讀前 `iconv -f UTF-16LE -t UTF-8`。
+
+### 6. 下一步（等阿志）
+1. 是否 push 本機分支到 GitHub（含 625053d 與今天全部 commit）；push 後才更新雲端 release-manifest.json。
+2. 是否開 Windows Developer Mode 讓 5 個 symlink 測試真正執行（全機設定，見 WINDOWS_SYMLINK_SKIPS 文件）。
+3. 10 秒上限下仍有的 11 項重負載失敗，要不要另開調查。
+
+### 7. 擱置
+- 舊機九項空輸出重驗：需要 LAPTOP-4Q87TNH8，本輪未做。
+- 分支 codex/wt-{auth,docs,tests}-20261023 保留未刪（已併入）；`C:\Users\suhwa\dev\c2c-wt-docs` 剩一個被程序鎖住的空資料夾，可之後刪。
+- 文件稽核留下的程式面待辦：`src/mcp/server.ts:67,84` 工具描述仍把 before 說成 HEAD；`scripts/verify-g7-windows.mjs:8` 寫死維護者 Node 路徑。
+
+---
+
 # 2026-09-01 | Windows release checkout | Codex
 
 ## Latest Status: Natural-Language Entry Corrected (2026-09-01 00:22, ACHIH-MAIN, Codex)
@@ -151,3 +202,8 @@ characters and failed at 248; the failing nested target was261characters.
 This does not identify the old machine's 11 failures, whose cause remains
 unknown. Neither CRLF nor the reused dependency junction caused the path probe
 failure.
+
+- 2026/10/23 12:25 本輪無實質變更：僅查看工作 A 進度（基線 404/399 過/5 跳過；壓力測試進行中，未 commit）；已設背景等待 EXIT 行，阿志指示全部跑完再一起報告。
+
+- 2026/10/23 14:45 整合：本機 codex/c2c-hardened-2026-08-31 已 merge 工作 A（ffd883b）、B（b160051），cherry-pick 工作 C 全部 5 commit（含 OAuth 05f5e5b：review 模式 oauth.ts:403 早已強制 redirect_uri、十次真實連線成功，修正只影響已停用的舊路徑，故收）；build 通過；兩次完整測試在背景跑（scratchpad vitest-final-1/2.log）。未 push。worktree 三個與分支 codex/wt-* 尚未移除。
+- 2026/10/23 14:58 整合後第一輪兩次完整測試：440/0/5 過、439/1/5（工作 C 新測試 aggregate byte cap 自設 9 秒上限，實測 6.3 與 9.7 秒）；已移除 3 個建 git repo 測試的 9 秒上限改用預設 30 秒（3acdd7e，斷言不變），正在背景重跑兩次（scratchpad vitest-final-3/4）。
