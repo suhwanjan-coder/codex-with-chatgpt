@@ -12,7 +12,7 @@
 
 在此 checkout 使用 `node scripts/verify-g7.mjs`，或 `pnpm test:g7`。入口重新 typecheck、build、跑全部 tests，保存 `.tooling/g7/run-*/vitest.json` 與 `gate.json`。exit1 可表示程式缺陷，也可表示環境缺乏必要能力；看 `reasons` 分辨，不能只看一般 Vitest exit0。
 
-另有 Codex 內部入口 `pnpm test:g7:windows-native`，對應 `scripts/verify-g7-windows.mjs`。此 native driver 仍使用 `scripts/verify-g7-windows.mjs` 中固定的維護者 Node 路徑，換機時須先核對，不是跨機通用入口。未帶明確授權旗標時不建立 fixture、不提權、不建立帳號。它不是新的使用者口令，你仍只需交辦「C2C」。已驗流程先以同一 normal Windows user 執行 `ValidateOnly` preflight，再取得 UAC 同意；不得全域設定 Git `safe.directory`。
+另有 Codex 內部入口 `pnpm test:g7:windows-native`，對應 `scripts/verify-g7-windows.mjs`。此 native driver 預設使用目前的 `process.execPath`，可在 `--authorize-elevated-fixtures` 後加上 `--node <absolute path>`；選定路徑必須是本機磁碟絕對路徑、存在的一般檔案，且檔案與祖先不得為 reparse point，驗證失敗即以 `G7_WINDOWS_NODE_*` 拒絕（不存在為 `G7_WINDOWS_NODE_MISSING`）。路徑與 SHA-256 記入 native evidence 及清理 fixture 後仍保留的 `.tooling/g7-node-runtime-<nonce>.json`，僅供一般權限下的編譯與驗證使用，提權 PowerShell helper 的 manifest／fingerprint 驗證維持不變。未帶明確授權旗標時不建立 fixture、不提權、不建立帳號。它不是新的使用者口令，你仍只需交辦「C2C」。已驗流程先以同一 normal Windows user 執行 `ValidateOnly` preflight，再取得 UAC 同意；不得全域設定 Git `safe.directory`。
 
 【歷史證據】2026/08/30 22:57 的 `.tooling/g7/run-hrnoPh/` 為嚴格 G7 exit 1：28 個測試檔、252 項通過、0 項失敗、2 項 file symlink skipped；該失敗保留。
 

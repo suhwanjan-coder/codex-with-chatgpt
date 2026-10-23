@@ -64,7 +64,7 @@ export function createMcpServer(ctx: McpContext): McpServer {
       title: "Read approved snapshot file",
       description:
         `Read one exact approved path from the immutable review snapshot. The version is ` +
-        `before or after, where before is the fixed HEAD pair and after is the captured review ` +
+        `before or after, where before is the pinned base commit (HEAD by default) and after is the captured review ` +
         `content; this never reads the live workspace. ${UNTRUSTED_NOTE}`,
       inputSchema: readFileSchema,
       annotations: { readOnlyHint: true },
@@ -81,7 +81,7 @@ export function createMcpServer(ctx: McpContext): McpServer {
       title: "Review file diff",
       description:
         `Return the fixed before-after pair for one exact approved path, compared with the ` +
-        `pinned HEAD captured in the review snapshot. This is not a live git diff and never ` +
+        `pinned base commit (HEAD by default) in the review snapshot. This is not a live git diff and never ` +
         `reads the live workspace. ${UNTRUSTED_NOTE}`,
       inputSchema: reviewDiffSchema,
       annotations: { readOnlyHint: true },
