@@ -110,6 +110,82 @@ describe("discovery metadata", () => {
 });
 
 describe("authorization + token flow", () => {
+  it("round-trips opaque state verbatim and rejects forged authorization request ids", async () => {
+    const clientId = await registerClient();
+    const { challenge } = pkceVerifierAndChallenge();
+    const pairing = bridge.pairing.create();
+    const forged = await fetch(`${base}/oauth/authorize`, {
+      method: "POST", body: new URLSearchParams({ request_id: "0".repeat(32), pairing_code: pairing.code }),
+      redirect: "manual",
+    });
+    expect(forged.status).toBe(400);
+    expect(forged.headers.get("location")).toBeNull();
+    const state = "opaque + / ? & = % \u754c";
+    const result = await authorizeWithPairing(clientId, challenge, pairing.code, state);
+    expect(result.status).toBe(302);
+    expect(new URL(result.location!).searchParams.get("state")).toBe(state);
+  }, 9_000);
+
+  it("rejects plain PKCE even when a challenge is supplied", async () => {
+    const clientId = await registerClient();
+    const url = new URL(`${base}/oauth/authorize`);
+    for (const [key, value] of Object.entries({ client_id: clientId, redirect_uri: REDIRECT_URI,
+      response_type: "code", code_challenge: "synthetic-challenge", code_challenge_method: "plain" })) url.searchParams.set(key, value);
+    const response = await fetch(url, { redirect: "manual" });
+    expect(response.status).toBe(302);
+    expect(new URL(response.headers.get("location")!).searchParams.get("error")).toBe("invalid_request");
+  }, 9_000);
+
+  it.each(["client", "redirect", "missing redirect"])("rejects an authorization code with a mismatched %s binding", async (kind) => {
+    const { verifier, challenge } = pkceVerifierAndChallenge();
+    const code = bridge.authStore.createAuthorizationCode({ clientId: "bound-client", redirectUri: REDIRECT_URI,
+      codeChallenge: challenge, scopes: ["workspace.read"], pairingSessionId: "synthetic-binding" });
+    const body = new URLSearchParams({ grant_type: "authorization_code", code, code_verifier: verifier,
+      client_id: kind === "client" ? "different-client" : "bound-client" });
+    if (kind !== "missing redirect") body.set("redirect_uri", kind === "redirect" ? `${REDIRECT_URI}/other` : REDIRECT_URI);
+    const response = await fetch(`${base}/oauth/token`, { method: "POST", body });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: "invalid_grant" });
+    expect(bridge.authStore.consumeAuthorizationCode(code)).toBeNull();
+  }, 9_000);
+
+  it("revokes access and refresh credentials through the revocation endpoint", async () => {
+    const tokens = bridge.authStore.issueTokens({ clientId: "revoke-endpoint", scopes: ["workspace.read", "offline_access"] });
+    for (const token of [tokens.accessToken, tokens.refreshToken!]) {
+      const response = await fetch(`${base}/oauth/revoke`, { method: "POST", body: new URLSearchParams({ token }) });
+      expect(response.status).toBe(200);
+    }
+    expect(bridge.authStore.verifyAccessToken(tokens.accessToken).ok).toBe(false);
+    expect(bridge.authStore.refresh(tokens.refreshToken!, "revoke-endpoint").ok).toBe(false);
+  }, 9_000);
+
+  it("hides the admin API from missing, wrong and proxied credentials", async () => {
+    for (const headers of [undefined, { authorization: "Bearer invalid" }]) {
+      const response = await fetch(`${base}/admin/info`, { headers });
+      expect(response.status).toBe(404);
+      expect(await response.text()).toBe("");
+    }
+    for (const header of ["cf-connecting-ip", "x-forwarded-for"]) {
+      const response = await fetch(`${base}/admin/info`, {
+        headers: { authorization: `Bearer ${bridge.adminToken}`, [header]: "192.0.2.1" },
+      });
+      expect(response.status).toBe(403);
+      expect(await response.json()).toEqual({ error: "LOCAL_REVIEW_ONLY" });
+    }
+    const allowed = await fetch(`${base}/admin/info`, { headers: { authorization: `Bearer ${bridge.adminToken}` } });
+    expect(allowed.status).toBe(200);
+    expect(await allowed.json()).toMatchObject({ workspaceId: bridge.workspace.id });
+  }, 9_000);
+
+  it("limits health output to service metadata and the workspace identifier", async () => {
+    const response = await fetch(`${base}/health`);
+    const body = await response.json();
+    expect(Object.keys(body).sort()).toEqual(["service", "status", "version", "workspaceId"]);
+    expect(body.workspaceId).toBe(bridge.workspace.id);
+    expect(JSON.stringify(body)).not.toContain(root);
+    expect(JSON.stringify(body)).not.toContain(bridge.adminToken);
+  }, 9_000);
+
   it("completes the full pairing + PKCE flow and calls MCP", async () => {
     const clientId = await registerClient();
     const { verifier, challenge } = pkceVerifierAndChallenge();

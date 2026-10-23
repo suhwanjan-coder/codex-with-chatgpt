@@ -32,6 +32,11 @@ afterAll(() => {
 });
 
 describe("path containment", () => {
+  it("rejects missing descendants of an outside junction and sibling-prefix roots", () => {
+    expect(() => ws.resolve("dir-out/not-created/deeper.txt")).toThrow(/outside/i);
+    expect(() => ws.resolve(`${root}-sibling/file.txt`)).toThrow(/outside/i);
+  }, 9_000);
+
   it("reads a normal relative path", async () => {
     const result = await ws.readFile("hello.txt");
     expect(result.content).toContain("hello world");
@@ -117,6 +122,24 @@ describe("sensitive files", () => {
 });
 
 describe("read_file pagination", () => {
+  it("rejects a first line larger than the byte budget instead of returning it", async () => {
+    write(root, "oversized-line.txt", "x".repeat(2048));
+    await expect(ws.readFile("oversized-line.txt", { maxBytes: 1024 })).rejects.toMatchObject({ code: "FILE_TOO_LARGE" });
+  }, 9_000);
+
+  it("counts UTF-8 bytes and clamps caller-supplied line and byte limits", async () => {
+    write(root, "utf8-budget.txt", Array.from({ length: 5 }, () => "\u754c".repeat(200)).join("\n"));
+    const page = await ws.readFile("utf8-budget.txt", { maxBytes: 1024 });
+    expect(Buffer.byteLength(page.content)).toBe(600);
+    expect(page.nextStartLine).toBe(2);
+    expect(page.truncated).toBe(true);
+    write(root, "hard-limits.txt", Array.from({ length: 3000 }, () => "x".repeat(600)).join("\n"));
+    const bounded = await ws.readFile("hard-limits.txt", { maxBytes: 10 * 1024 * 1024, maxLines: 10_000 });
+    expect(Buffer.byteLength(bounded.content)).toBeLessThanOrEqual(1024 * 1024);
+    expect(bounded.endLine).toBeLessThanOrEqual(2000);
+    expect(bounded.truncated).toBe(true);
+  }, 9_000);
+
   it("caps unbounded reads at 400 lines and reports the remainder", async () => {
     const big = Array.from({ length: 1000 }, (_, i) => `line ${i + 1}`).join("\n") + "\n";
     write(root, "big.txt", big);

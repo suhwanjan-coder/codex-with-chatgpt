@@ -50,6 +50,20 @@ describe.each(engines())("search engine: %s", (engine) => {
     expect(authMatch?.line).toBe(1);
   });
 
+  it("skips files over two MiB and enforces custom sensitive rules", async () => {
+    configure();
+    const isolated = makeTmpDir("search-bounds");
+    try {
+      write(isolated, "large.txt", "size-marker\n" + "x".repeat(2 * 1024 * 1024));
+      write(isolated, "safe.txt", "size-marker\n");
+      write(isolated, ".c2cignore", "private/\n");
+      write(isolated, "private/note.txt", "size-marker\n");
+      const result = await searchWorkspace(new Workspace(isolated), { query: "size-marker" });
+      expect(result.engine).toBe(engine);
+      expect(result.matches.map(match => match.path)).toEqual(["safe.txt"]);
+    } finally { cleanup(isolated); }
+  }, 9_000);
+
   it("never returns sensitive or noise files", async () => {
     configure();
     const result = await searchWorkspace(ws, { query: "needle-alpha" });

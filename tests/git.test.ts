@@ -59,6 +59,18 @@ describe("gitStatus", () => {
 });
 
 describe("gitDiff pagination", () => {
+  it("clamps an oversized requested diff page to the hard byte cap", () => {
+    try {
+      write(repo, "hello.txt", Array.from({ length: 6000 }, () => "x".repeat(80)).join("\n"));
+      const page = gitDiff(repo, { mode: "unstaged", maxBytes: 1024 * 1024 });
+      expect(page.hasMore).toBe(true);
+      expect(page.returnedBytes).toBeGreaterThan(0);
+      expect(page.returnedBytes).toBeLessThanOrEqual(256 * 1024);
+      expect(Buffer.byteLength(page.diff)).toBe(page.returnedBytes);
+      expect(page.nextOffset).toBe(page.returnedBytes);
+    } finally { git(repo, "checkout", "--", "hello.txt"); }
+  }, 9_000);
+
   it("returns the full diff when small", () => {
     write(repo, "hello.txt", "a different greeting\n");
     const diff = gitDiff(repo, { mode: "unstaged" });

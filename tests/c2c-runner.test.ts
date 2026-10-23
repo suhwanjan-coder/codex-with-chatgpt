@@ -5,7 +5,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import readline from "node:readline";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, snapshotDigest } from "../src/review/snapshot.js";
 import { cleanup, makeGitRepo, makeTmpDir } from "./helpers.js";
 import { parseC2cRunArgs, preflightC2cRun, runC2c } from "../scripts/run-c2c.mjs";
@@ -16,6 +16,7 @@ const terminals: readline.Interface[] = [];
 const inputs: PassThrough[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const terminal of terminals.splice(0)) terminal.close();
   for (const input of inputs.splice(0)) input.destroy();
   for (const dir of dirs.splice(0)) cleanup(dir);
@@ -168,6 +169,54 @@ function runnerHarness(input: ReturnType<typeof makePreparedSnapshot>, tunnel: F
 }
 
 describe("C2C runner lifecycle", () => {
+  it("rejects an unpinned binary before creating state, listeners or a tunnel", async () => {
+    const input = makePreparedSnapshot();
+    const tunnel = new FakeTunnel();
+    const test = runnerHarness(input, tunnel);
+    const dependencies = { ...test.dependencies };
+    delete (dependencies as Partial<typeof dependencies>).assertPinnedTunnelBinary;
+    const original = fs.readFileSync;
+    vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, ...args: unknown[]) => {
+      if (String(file).endsWith("cloudflared-2026.8.2-windows-amd64.exe")) return Buffer.from("synthetic-unpinned-binary");
+      return Reflect.apply(original, fs, [file, ...args]);
+    }) as typeof fs.readFileSync);
+    await expect(runC2c(options(input), dependencies)).rejects.toThrow("C2C_TUNNEL_BINARY_MISMATCH");
+    expect(fs.existsSync(input.state)).toBe(false);
+    expect(tunnel.starts).toBe(0);
+    expect(test.timers).toEqual([]);
+    expect(test.events).toEqual([]);
+  }, 9_000);
+
+  it("serves only empty 503 responses before approval and closes that loopback origin on EOF", async () => {
+    const input = makePreparedSnapshot();
+    let base = "";
+    let stops = 0;
+    const statuses: number[] = [];
+    const test = runnerHarness(input, new FakeTunnel(), "eof", {
+      // The pre-approval HTTP gate is under test, not native storage ACLs.
+      ensurePrivateDirectory: (target: string) => { fs.mkdirSync(target, { recursive: true }); return target; },
+      writePrivateNewFile: (target: string, text: string) => fs.writeFileSync(target, text, { flag: "wx" }),
+      createTunnel: () => ({
+        start: async (port: number) => {
+          base = `http://127.0.0.1:${port}`;
+          for (const route of ["/mcp", "/oauth/authorize", "/.well-known/oauth-authorization-server"]) {
+            const response = await fetch(`${base}${route}`, { signal: AbortSignal.timeout(1000) });
+            statuses.push(response.status);
+            expect(await response.text()).toBe("");
+          }
+          return "https://c2c-runner-test.trycloudflare.com";
+        },
+        stop: async () => { stops++; },
+      }),
+    });
+    const runner = await runC2c(options(input), test.dependencies);
+    await runner.closed;
+    expect(statuses).toEqual([503, 503, 503]);
+    expect(runner.started).toBe(false);
+    expect(stops).toBe(1);
+    await expect(fetch(`${base}/mcp`, { signal: AbortSignal.timeout(1000) })).rejects.toThrow();
+  }, 9_000);
+
   it("runs a real loopback bridge/session after approval and exposes an awaitable cleanup handle", async () => {
     const input = makePreparedSnapshot("non-sensitive");
     const tunnel = new FakeTunnel();

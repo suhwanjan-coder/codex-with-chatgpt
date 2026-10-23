@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 // The gate is a Node entry point, deliberately independent of the build output.
 // @ts-expect-error Plain ESM script has no generated declaration file.
 import { evaluateG7, REQUIRED_NATIVE_CHECKS, REQUIRED_SUITES } from "../scripts/verify-g7.mjs";
@@ -19,6 +21,25 @@ function report() {
 }
 
 describe("strict G7 evidence gate", () => {
+  it("rejects filters and report overrides before starting the G7 runner", () => {
+    for (const argument of ["--filter", "--report=old.json", "--skip"]) {
+      const result = spawnSync(process.execPath, [fileURLToPath(new URL("../scripts/verify-g7.mjs", import.meta.url)), argument], {
+        encoding: "utf8", timeout: 3000, windowsHide: true,
+      });
+      expect(result.status).toBe(1);
+      expect(result.stderr).toContain("G7 runner accepts no filters, report overrides, or skip options");
+      expect(result.stdout).toBe("");
+    }
+  }, 9_000);
+
+  it("rejects todo safety assertions even when the process reports success", () => {
+    const data = report();
+    data.numTodoTests = 1;
+    data.testResults[0].assertionResults[0].status = "todo";
+    expect(evaluateG7(data, "win32").reasons).toContain("SKIPPED_OR_TODO_TESTS");
+    expect(evaluateG7(data, "win32").passed).toBe(false);
+  }, 9_000);
+
   it("accepts complete passing Windows evidence but never non-Windows evidence", () => {
     expect(evaluateG7(report(), "win32").passed).toBe(true);
     expect(evaluateG7(report(), "linux").reasons).toContain("WINDOWS_REQUIRED");

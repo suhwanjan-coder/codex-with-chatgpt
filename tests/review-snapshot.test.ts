@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it } from "vitest";
 import { createSnapshot, parseSnapshot, snapshotDigest } from "../src/review/snapshot.js";
 import { cleanup, git, makeGitRepo, makeTmpDir, write } from "./helpers.js";
@@ -22,6 +23,47 @@ function expectCode(fn: () => unknown, code: string): void {
 }
 
 describe("review snapshots", () => {
+  it("enforces the aggregate before-plus-after byte cap at preparation and loading", () => {
+    const root = repo();
+    const paths = Array.from({ length: 5 }, (_, index) => `bounded-${index}.txt`);
+    for (const file of paths) write(root, file, "x".repeat(64 * 1024));
+    git(root, "add", ".");
+    git(root, "commit", "-m", "bounded text");
+    const exact = createSnapshot(root, { taskId: "aggregate", paths: paths.slice(0, 4) });
+    expect(exact.files.reduce((bytes, file) => bytes + Buffer.byteLength(file.before!) + Buffer.byteLength(file.after!), 0)).toBe(512 * 1024);
+    expect(() => createSnapshot(root, { taskId: "aggregate-over", paths })).toThrow("SNAPSHOT_SCHEMA");
+    expect(() => parseSnapshot({ ...exact, files: [...exact.files, { path: "extra.txt", before: null, after: "x" }] })).toThrow("SNAPSHOT_SCHEMA");
+  }, 9_000);
+
+  it("applies custom ignore rules to snapshot preparation without allowing negation of static denies", () => {
+    const root = repo();
+    write(root, ".c2cignore", "hello.txt\n!.env.example\n");
+    write(root, ".env.example", "ordinary text\n");
+    expect(() => createSnapshot(root, { taskId: "custom-ignore", paths: ["hello.txt"] })).toThrow("SNAPSHOT_PATH");
+    expect(() => createSnapshot(root, { taskId: "static-ignore", paths: [".env.example"] })).toThrow("SNAPSHOT_PATH");
+    expect(createSnapshot(root, { taskId: "positive-control", paths: ["src/index.ts"] }).files).toHaveLength(1);
+  }, 9_000);
+
+  it("binds every approval field and fixed protocol budgets into the snapshot digest", () => {
+    const root = repo();
+    const snapshot = createSnapshot(root, { taskId: "digest-fields", paths: ["hello.txt"], dataClass: "public" });
+    expect(snapshot.expiresAt - snapshot.createdAt).toBe(15 * 60_000);
+    const digest = snapshotDigest(snapshot);
+    const { version, taskId, provider, model, purpose, dataClass, files, ...scope } = snapshot;
+    // Independent wire-contract value: changing a protocol budget must require a new approval.
+    const bound = { version, taskId, provider, model, purpose, dataClass, ...scope,
+      protocolLimits: { maxResponses: 32, maxResponseBytes: 16384, maxTotalBytes: 65536 }, files };
+    expect(digest).toBe(createHash("sha256").update(JSON.stringify(bound)).digest("hex"));
+    for (const patch of [{ taskId: "other-task" }, { model: "other-model" }, { maxCalls: 29 },
+      { maxOutputBytes: snapshot.maxOutputBytes - 1 }, { expiresAt: snapshot.expiresAt - 1 },
+      { createdAt: snapshot.createdAt - 1 }, { baseCommit: "b".repeat(40) },
+      { files: [{ ...snapshot.files[0], after: "different approved content" }] }]) {
+      expect(snapshotDigest({ ...snapshot, ...patch })).not.toBe(digest);
+    }
+    expect(() => parseSnapshot({ ...snapshot, provider: "external" })).toThrow("SNAPSHOT_SCHEMA");
+    expect(() => parseSnapshot({ ...snapshot, purpose: "execute" })).toThrow("SNAPSHOT_SCHEMA");
+  }, 9_000);
+
   it("captures a frozen HEAD/current pair that remains immutable after later live changes", () => {
     const root = repo();
     write(root, "hello.txt", "captured live value\n");

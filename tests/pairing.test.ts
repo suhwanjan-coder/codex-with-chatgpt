@@ -6,6 +6,32 @@ afterEach(() => {
 });
 
 describe("PairingManager", () => {
+  it("uses the documented five-attempt and five-minute defaults", () => {
+    vi.useFakeTimers();
+    const manager = new PairingManager("ws1");
+    const first = manager.create();
+    expect(first.expiresAt - Date.now()).toBe(5 * 60_000);
+    for (let attempt = 1; attempt < 5; attempt++) {
+      expect(manager.verify("invalid")).toMatchObject({ ok: false, reason: "invalid", attemptsLeft: 5 - attempt });
+    }
+    expect(manager.verify("invalid")).toMatchObject({ ok: false, reason: "too_many_attempts" });
+    expect(manager.verify(first.code)).toMatchObject({ ok: false, reason: "no_active_session" });
+    const next = manager.create();
+    vi.advanceTimersByTime(5 * 60_000 + 1);
+    expect(manager.verify(next.code)).toMatchObject({ ok: false, reason: "expired" });
+  }, 9_000);
+
+  it("allows ten attempts per IP per minute and resets only that rate window", () => {
+    vi.useFakeTimers();
+    const manager = new PairingManager("ws1", { maxAttempts: 100 });
+    const { code } = manager.create();
+    for (let attempt = 0; attempt < 10; attempt++) expect(manager.verify("invalid", "192.0.2.1").reason).toBe("invalid");
+    expect(manager.verify(code, "192.0.2.1")).toEqual({ ok: false, reason: "rate_limited" });
+    expect(manager.verify("invalid", "192.0.2.2").reason).toBe("invalid");
+    vi.advanceTimersByTime(60_001);
+    expect(manager.verify(code, "192.0.2.1").ok).toBe(true);
+  }, 9_000);
+
   it("generates codes in XXXX-XXXX format without ambiguous characters", () => {
     const manager = new PairingManager("ws1");
     for (let i = 0; i < 20; i++) {

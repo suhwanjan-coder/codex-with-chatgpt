@@ -79,6 +79,20 @@ afterEach(() => {
 });
 
 describe("review-only CLI security boundary", () => {
+  it.each(["inside root", "existing output"])("refuses snapshot output in an %s without overwriting data or creating state", location => {
+    const root = tmp("cli-output-boundary");
+    makeGitRepo(root);
+    const stateDir = path.join(tmp("cli-output-state"), "absent-state");
+    const outputFile = path.join(location === "inside root" ? root : tmp("cli-output-existing"), "snapshot.json");
+    if (location === "existing output") fs.writeFileSync(outputFile, "preserve-existing-output");
+    const result = runCli(["review", "prepare", "--workspace", root, "--task", "output-boundary",
+      "--files", "hello.txt", "--data-class", "public", "--output", outputFile], stateDir);
+    expect(result.status).not.toBe(0);
+    if (location === "existing output") expect(fs.readFileSync(outputFile, "utf8")).toBe("preserve-existing-output");
+    else expect(fs.existsSync(outputFile)).toBe(false);
+    expect(fs.existsSync(stateDir)).toBe(false);
+  }, 9_000);
+
   it("exposes C2C run help without starting state and requires explicit external authorization", () => {
     const state = path.join(tmp("cli-real-help"), "state");
     const help = runCli(["review", "run", "--help"], state);
@@ -143,6 +157,7 @@ describe("review-only CLI security boundary", () => {
       expect(inspected.status, output(inspected)).toBe(0);
       expect((JSON.parse(output(inspected)) as { digest: string; snapshot: { dataClass: string } }).digest).toBe(preparedBody.digest);
       expect((JSON.parse(output(inspected)) as { snapshot: { dataClass: string } }).snapshot.dataClass).toBe(dataClass);
+      expect(JSON.parse(output(inspected)).protocolLimits).toEqual({ maxResponses: 32, maxResponseBytes: 16384, maxTotalBytes: 65536 });
     }
   });
 
