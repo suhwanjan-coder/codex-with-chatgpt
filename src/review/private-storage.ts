@@ -4,7 +4,8 @@ import { constants } from "node:os";
 import path from "node:path";
 
 const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
-const POWERSHELL_TIMEOUT_MS = 5_000;
+// Allow measured Windows contention headroom without retrying ambiguous CreateNew operations.
+const POWERSHELL_TIMEOUT_MS = 10_000;
 const POWERSHELL_MAX_BUFFER = 16 * 1024;
 
 type PrivateStorageRunner = (input: string) => SpawnSyncReturns<string>;

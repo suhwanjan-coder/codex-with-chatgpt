@@ -123,3 +123,80 @@ runs did not isolate warmup, background activity, or individual startup/helper/
 scheduler costs. Failure rates here are stress observations, not production
 incidence estimates. The original historical root cause is **PARTIALLY SUPPORTED**;
 the newly observed helper-timeout mechanism is confirmed.
+
+## Bounded Mitigation
+
+The diagnostic version with the original five-second bound is preserved in
+commit `d435154`. The mitigation raises only the configured PowerShell timeout
+to ten seconds. This provides bounded headroom for the observed deadline
+failures; censored timeout durations do not establish a required completion
+time or a guarantee under arbitrary load. Synchronous failures can now take
+longer to return.
+
+No operation is retried. In particular, no-output timeout does not make file
+creation idempotent: `CreateNew` may already have committed before termination,
+and another attempt could return `EXISTS`. A late-output timeout still fails.
+The script, ACL/owner/DACL checks, path checks, buffer limit, exclusive creation,
+and verification predicates are unchanged. No security assertion was removed.
+
+A separate mocked-process regression requires a finite timeout above five and
+at most ten seconds, one invocation, and unchanged launch/buffer protections.
+It failed against the five-second version with `expected 5000 to be greater
+than 5000`. The real ACL tests remain separate and unmocked. Diagnostic tests
+also cover the observed timeout-with-status-zero-and-output case.
+
+## Post-Mitigation Observation
+
+```text
+STRESS SUMMARY workers=8 load=16 iterations=1 passed=0 failed=1 diagnostics=0 timeouts=0 loadStarted=3006 loadCompleted=2990 loadFailed=0
+```
+
+The same high-load configuration completed one iteration in 465,579 ms, with
+57 passed and 11 failed tests. No private-storage diagnostic escaped to the
+reporter. This is not a clean high-load pass or proof that all helper timeouts
+were eliminated: the eleven failures were classified `OTHER`, and nested CLI
+errors or assertion failures can hide a storage diagnostic. The JSON retains
+all failure names. One post-mitigation iteration cannot establish a failure-rate
+improvement against ten earlier iterations. No assertion or unrelated test
+deadline was relaxed to turn these failures into passes.
+
+The required four-worker, two-iteration acceptance smoke then passed end to end:
+
+```text
+STRESS SUMMARY workers=4 load=0 iterations=2 passed=2 failed=0 diagnostics=0 timeouts=0 loadStarted=0 loadCompleted=0 loadFailed=0
+```
+
+Both iterations passed all 68 tests (136 total), in 198,377 and 189,783 ms.
+The aggregate and per-iteration JSON files were written successfully; the
+aggregate is `_working/stress-private-storage-2026-10-23T06-09-57-716Z.json`.
+
+## Final Verification
+
+`CI=true corepack pnpm build` exited zero. The diagnostic and timeout regression
+files passed all 11 tests. Three consecutive full `corepack pnpm test` runs,
+each with `CI=true` and no synthetic load, then exited zero:
+
+| Run | Files passed | Tests passed | Failed | Skipped | Total | Duration |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 39 | 404 | 0 | 5 | 409 | 171.30 s |
+| 2 | 39 | 404 | 0 | 5 | 409 | 233.29 s |
+| 3 | 39 | 404 | 0 | 5 | 409 | 210.96 s |
+
+The same five file-symlink skips remain: one in review-windows-native, three in
+workspace-config (.c2cignore, .c2c.json, package.json), and one in windows-legacy.
+No existing test line or assertion was removed or changed: 108 lines were added
+to review-private-storage and the isolated timeout regression adds 23 lines.
+The PowerShell script hash is unchanged from the baseline:
+`b65eab021d70978379163bbc1d6f4c583f7a4f1598fc5f67a709507110cefc45`.
+The load helper has a UTF-8 BOM. Raw logs, JSON, and intentionally failing probes
+remain uncommitted in `_working/`; the historical repair report is unchanged.
+
+## Remaining Limits
+
+The historical event, high-load failures without diagnostics, the single failed
+load process, and failures hidden behind CLI/assertion boundaries remain
+unattributed. The ten-second setting is bounded mitigation, not a measured
+optimal deadline or a guarantee of high-load success. No production incidence,
+second-machine, or POSIX execution was measured. The existing 30-second test
+deadline was unchanged. Independent review was not performed because this task
+explicitly prohibited delegation. No push or deployment was performed.
