@@ -1,9 +1,10 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { setImmediate as yieldToWorker } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { ensurePrivateDirectory, evaluatePrivateAclSddlForTests, verifyPrivateFile, writePrivateNewFile } from "../src/review/private-storage.js";
-import { cleanup, makeTmpDir } from "./helpers.js";
+import { childProcessFailure, cleanup, makeTmpDir } from "./helpers.js";
 import type { SpawnSyncReturns } from "node:child_process";
 import { vi } from "vitest";
 import * as storage from "../src/review/private-storage.js";
@@ -33,26 +34,29 @@ function tmp(name: string): string {
 }
 
 function privateDescriptor(target: string): { protected: boolean; ownerSid: string; sids: string[] } {
+  const start = performance.now();
   const result = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
     "$ErrorActionPreference='Stop'; $item=Get-Item -LiteralPath $env:C2C_PRIVATE_TARGET; $acl=$item.GetAccessControl(); [Console]::Out.Write(([pscustomobject]@{ protected=[bool]$acl.AreAccessRulesProtected; ownerSid=$acl.GetOwner([System.Security.Principal.SecurityIdentifier]).Value; sids=@($acl.GetAccessRules($true,$true,[System.Security.Principal.SecurityIdentifier]) | ForEach-Object { $_.IdentityReference.Value } | Sort-Object -Unique) } | ConvertTo-Json -Compress))",
-  ], { encoding: "utf8", timeout: 5_000, maxBuffer: 16 * 1024, windowsHide: true, env: { ...process.env, C2C_PRIVATE_TARGET: target } });
-  if (result.error || result.status !== 0) throw new Error("ACL_READBACK_UNAVAILABLE");
+  ], { encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true, env: { ...process.env, C2C_PRIVATE_TARGET: target } });
+  if (result.error || result.status !== 0) throw childProcessFailure("ACL_READBACK_UNAVAILABLE", start, result);
   return JSON.parse(result.stdout) as { protected: boolean; ownerSid: string; sids: string[] };
 }
 
 function currentAllowedSids(): string[] {
+  const start = performance.now();
   const result = spawnSync("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", [
     "-NoLogo", "-NoProfile", "-NonInteractive", "-Command",
     "[Console]::Out.Write(([pscustomobject]@{ sids=@([System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value,'S-1-5-18','S-1-5-32-544' | Sort-Object -Unique) } | ConvertTo-Json -Compress))",
-  ], { encoding: "utf8", timeout: 5_000, maxBuffer: 16 * 1024, windowsHide: true });
-  if (result.error || result.status !== 0) throw new Error("ACL_READBACK_UNAVAILABLE");
+  ], { encoding: "utf8", timeout: 10_000, maxBuffer: 16 * 1024, windowsHide: true });
+  if (result.error || result.status !== 0) throw childProcessFailure("ACL_READBACK_UNAVAILABLE", start, result);
   return (JSON.parse(result.stdout) as { sids: string[] }).sids;
 }
 
-afterEach(() => { while (dirs.length) cleanup(dirs.pop()!); });
+afterEach(async () => { while (dirs.length) cleanup(dirs.pop()!); await yieldToWorker(); });
 
-describe("review private storage", () => {
+// The largest ACL case performs eight native create/readback operations, each bounded to ten seconds.
+describe("review private storage", { timeout: 80_000 }, () => {
   it.skipIf(process.platform !== "win32")("attaches bounded content-free diagnostics without retrying ambiguous file creation", () => {
     const target = path.join(tmp("private-diagnostic"), "private-path-marker");
     const secret = "synthetic-input-marker-測試";

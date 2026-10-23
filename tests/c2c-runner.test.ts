@@ -5,6 +5,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { pathToFileURL } from "node:url";
 import readline from "node:readline";
+import { setImmediate as yieldToWorker } from "node:timers/promises";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSnapshot, snapshotDigest } from "../src/review/snapshot.js";
 import { cleanup, makeGitRepo, makeTmpDir } from "./helpers.js";
@@ -15,11 +16,12 @@ const dirs: string[] = [];
 const terminals: readline.Interface[] = [];
 const inputs: PassThrough[] = [];
 
-afterEach(() => {
+afterEach(async () => {
   vi.restoreAllMocks();
   for (const terminal of terminals.splice(0)) terminal.close();
   for (const input of inputs.splice(0)) input.destroy();
   for (const dir of dirs.splice(0)) cleanup(dir);
+  await yieldToWorker();
 });
 
 function makePreparedSnapshot(dataClass: "public" | "non-sensitive" | "synthetic" | "unclassified" = "public") {
@@ -64,7 +66,7 @@ describe("C2C real snapshot runner preflight", () => {
     expect(result.status).toBe(0);
     expect(result.stdout).toBe("IMPORTED");
     expect(fs.existsSync(input.state)).toBe(false);
-  });
+  }, 45_000); // Thirty seconds for fixture setup plus the unchanged fifteen-second child bound.
 
   it.each(["public", "non-sensitive"] as const)("accepts one prepared %s snapshot without reading or changing the reviewed repository", (dataClass) => {
     const input = makePreparedSnapshot(dataClass);
@@ -168,7 +170,8 @@ function runnerHarness(input: ReturnType<typeof makePreparedSnapshot>, tunnel: F
   };
 }
 
-describe("C2C runner lifecycle", () => {
+// A complete real lifecycle performs thirteen bounded native storage requests.
+describe("C2C runner lifecycle", { timeout: 160_000 }, () => {
   it("rejects an unpinned binary before creating state, listeners or a tunnel", async () => {
     const input = makePreparedSnapshot();
     const tunnel = new FakeTunnel();
@@ -209,6 +212,7 @@ describe("C2C runner lifecycle", () => {
         stop: async () => { stops++; },
       }),
     });
+    await yieldToWorker();
     const runner = await runC2c(options(input), test.dependencies);
     await runner.closed;
     expect(statuses).toEqual([503, 503, 503]);
@@ -221,9 +225,10 @@ describe("C2C runner lifecycle", () => {
     const input = makePreparedSnapshot("non-sensitive");
     const tunnel = new FakeTunnel();
     const test = runnerHarness(input, tunnel);
+    await yieldToWorker();
     const runner = await runC2c(options(input), test.dependencies);
 
-    expect(runner.started).toBe(true);
+    expect(runner.started, test.errors.join("\n")).toBe(true);
     expect(tunnel.starts).toBe(1);
     expect(test.events.map(event => event.event)).toContain("c2c_awaiting_chatgpt_connection");
     expect(test.processRef.listenerCount("SIGINT")).toBe(1);
@@ -241,6 +246,7 @@ describe("C2C runner lifecycle", () => {
     const input = makePreparedSnapshot();
     const tunnel = new FakeTunnel();
     const test = runnerHarness(input, tunnel, "eof");
+    await yieldToWorker();
     const runner = await runC2c(options(input), test.dependencies);
 
     await runner.closed;
@@ -256,8 +262,10 @@ describe("C2C runner lifecycle", () => {
     const input = makePreparedSnapshot();
     const tunnel = new FakeTunnel();
     const test = runnerHarness(input, tunnel);
+    await yieldToWorker();
     const runner = await runC2c(options(input), test.dependencies);
 
+    expect(runner.started, test.errors.join("\n")).toBe(true);
     expect(test.timers).toHaveLength(1);
     (test.timers[0] as { callback: () => void }).callback();
     await runner.closed;
@@ -271,6 +279,7 @@ describe("C2C runner lifecycle", () => {
     const input = makePreparedSnapshot();
     const tunnel = new FakeTunnel(true);
     const test = runnerHarness(input, tunnel);
+    await yieldToWorker();
     const runner = await runC2c(options(input), test.dependencies);
 
     await runner.closed;
@@ -292,6 +301,7 @@ describe("C2C runner lifecycle", () => {
       authStoreFile: "fake-auth-store", auditFile: "fake-audit", close: () => { sessionCloseCalls += 1; throw new Error("SESSION_CLOSE_FAILED"); },
       onClose: () => {},
     };
+    await yieldToWorker();
     const runner = await runC2c(options(input), {
       ...test.dependencies,
       createSession: () => session,

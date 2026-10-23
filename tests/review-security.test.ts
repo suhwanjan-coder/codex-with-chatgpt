@@ -77,7 +77,8 @@ function reviewFixture(opts: {
   const snapshot = createSnapshot(root, {
     taskId: opts.taskId ?? "security-review",
     paths: ["src/index.ts"],
-    ttlMs: 60_000,
+    // Two real native sessions can consume twelve ten-second helper bounds.
+    ttlMs: 300_000,
     maxCalls: opts.maxCalls,
     maxOutputBytes: opts.maxOutputBytes,
   });
@@ -192,7 +193,7 @@ afterEach(async () => {
   for (const dir of dirs.splice(0)) cleanup(dir);
 });
 
-describe("isolated review OAuth and bridge security", () => {
+describe("isolated review OAuth and bridge security", { timeout: 150_000 }, () => {
   it("requires the exact loopback MCP resource at authorize and token exchange", async () => {
     const { bridge, base } = await openReviewBridge();
     const info = await fetch(`${base}/admin/info`, { headers: { authorization: `Bearer ${bridge.adminToken}` } });

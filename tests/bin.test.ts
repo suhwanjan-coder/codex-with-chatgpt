@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { expect, it } from "vitest";
 import { cleanup, makeGitRepo, makeTmpDir, write } from "./helpers.js";
+import { runCliProcess } from "./cli-process.js";
 import { createSnapshot, snapshotDigest } from "../src/review/snapshot.js";
 
-const CLI_SMOKE_TTL_MS = 15_000;
+// Leave room for seven native startup requests before checking real absolute expiry.
+const CLI_SMOKE_TTL_MS = 90_000;
 const CLI_SMOKE_TIMEOUT_MS = CLI_SMOKE_TTL_MS + 10_000;
 
 it("loads built CLI modules through a file URL, including Windows paths and spaces", () => {
@@ -23,7 +25,7 @@ it("loads built CLI modules through a file URL, including Windows paths and spac
   } finally { cleanup(root); }
 });
 
-it("starts the actual CLI for a synthetic approval and exits after its bounded lifetime", () => {
+it("starts the actual CLI for a synthetic approval and exits after its bounded lifetime", async () => {
   const root = makeTmpDir("bin-review-root");
   const state = makeTmpDir("bin-review-state");
   try {
@@ -31,9 +33,9 @@ it("starts the actual CLI for a synthetic approval and exits after its bounded l
     const snapshot = createSnapshot(root, { taskId: "synthetic-cli-smoke", paths: ["hello.txt"], ttlMs: CLI_SMOKE_TTL_MS });
     write(state, "snapshot.json", JSON.stringify(snapshot));
     const entry = fileURLToPath(new URL("../bin/c2c.js", import.meta.url));
-    const run = spawnSync(process.execPath, [entry, "review", "serve", "--snapshot", path.join(state, "snapshot.json"),
+    const run = await runCliProcess([entry, "review", "serve", "--snapshot", path.join(state, "snapshot.json"),
       "--approval", snapshotDigest(snapshot), "--state-dir", path.join(state, "session")],
-      { encoding: "utf8", timeout: CLI_SMOKE_TIMEOUT_MS, windowsHide: true });
+      { timeoutMs: CLI_SMOKE_TIMEOUT_MS });
     expect(run.stderr).toBe("");
     expect(run.status).toBe(0);
     expect(JSON.parse(run.stdout).mode).toBe("LOCAL_MOCK_ONLY");
@@ -42,4 +44,4 @@ it("starts the actual CLI for a synthetic approval and exits after its bounded l
     expect(audit).toContain('"outcome":"expired"');
     expect(fs.readdirSync(privateState).some((name) => name.endsWith(".lock"))).toBe(false);
   } finally { cleanup(root); cleanup(state); }
-});
+}, CLI_SMOKE_TIMEOUT_MS + 30_000);

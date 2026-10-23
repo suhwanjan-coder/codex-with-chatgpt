@@ -1,10 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
-import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { remoteReviewDigest, type RemoteReviewPermit } from "../src/review/remote-permit.js";
 import { cleanup, git, makeGitRepo, makeTmpDir, write } from "./helpers.js";
+import { runCliProcess, type CliResult } from "./cli-process.js";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const dirs: string[] = [];
@@ -15,56 +15,26 @@ function tmp(name: string): string {
   return dir;
 }
 
-function runCli(args: string[], stateDir: string): ReturnType<typeof spawnSync> {
-  return spawnSync(process.execPath, ["--import", "tsx", "src/cli/index.ts", ...args], {
-    cwd: projectRoot,
-    encoding: "utf8",
-    timeout: 15_000,
+// A CLI startup plus one bounded native request; serve adds seven native requests.
+const CLI_TIMEOUT_MS = 30_000;
+const CLI_SERVE_TIMEOUT_MS = 90_000;
+const cliTestBudget = (commands: number, servers = 0): number => 30_000 + commands * CLI_TIMEOUT_MS + servers * CLI_SERVE_TIMEOUT_MS;
+
+function runCli(args: string[], stateDir: string): Promise<CliResult> {
+  return runCliProcess(["--import", "tsx", "src/cli/index.ts", ...args], {
+    cwd: projectRoot, timeoutMs: CLI_TIMEOUT_MS,
     env: { ...process.env, C2C_STATE_DIR: stateDir, GIT_TERMINAL_PROMPT: "0" },
   });
 }
 
-function output(result: ReturnType<typeof spawnSync>): string {
-  return `${result.stdout ?? ""}${result.stderr ?? ""}`;
+function output(result: CliResult): string {
+  return `${result.stdout}${result.stderr}`;
 }
 
-function runCliUntilMarker(args: string[], stateDir: string, marker: string): Promise<{ stdout: string; stderr: string; status: number | null }> {
-  return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, ["--import", "tsx", "src/cli/index.ts", ...args], {
-      cwd: projectRoot,
-      env: { ...process.env, C2C_STATE_DIR: stateDir, GIT_TERMINAL_PROMPT: "0" },
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    let stdout = "";
-    let stderr = "";
-    let stopping = false;
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (!stopping) child.kill();
-      if (!settled) { settled = true; reject(new Error(`CLI_TIMEOUT: ${stdout}${stderr}`)); }
-    }, 20_000);
-    const stop = (): void => {
-      if (stopping) return;
-      stopping = true;
-      child.kill("SIGINT");
-    };
-    child.stdout.on("data", (chunk: Buffer) => {
-      stdout += chunk.toString("utf8");
-      if (stdout.includes(marker)) stop();
-    });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.once("close", (status) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve({ stdout, stderr, status });
-    });
+function runCliUntilMarker(args: string[], stateDir: string, marker: string): Promise<CliResult> {
+  return runCliProcess(["--import", "tsx", "src/cli/index.ts", ...args], {
+    cwd: projectRoot, timeoutMs: CLI_SERVE_TIMEOUT_MS, marker,
+    env: { ...process.env, C2C_STATE_DIR: stateDir, GIT_TERMINAL_PROMPT: "0" },
   });
 }
 
@@ -79,37 +49,37 @@ afterEach(() => {
 });
 
 describe("review-only CLI security boundary", () => {
-  it.each(["inside root", "existing output"])("refuses snapshot output in an %s without overwriting data or creating state", location => {
+  it.each(["inside root", "existing output"])("refuses snapshot output in an %s without overwriting data or creating state", async location => {
     const root = tmp("cli-output-boundary");
     makeGitRepo(root);
     const stateDir = path.join(tmp("cli-output-state"), "absent-state");
     const outputFile = path.join(location === "inside root" ? root : tmp("cli-output-existing"), "snapshot.json");
     if (location === "existing output") fs.writeFileSync(outputFile, "preserve-existing-output");
-    const result = runCli(["review", "prepare", "--workspace", root, "--task", "output-boundary",
+    const result = await runCli(["review", "prepare", "--workspace", root, "--task", "output-boundary",
       "--files", "hello.txt", "--data-class", "public", "--output", outputFile], stateDir);
     expect(result.status).not.toBe(0);
     if (location === "existing output") expect(fs.readFileSync(outputFile, "utf8")).toBe("preserve-existing-output");
     else expect(fs.existsSync(outputFile)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, cliTestBudget(1));
 
-  it("exposes C2C run help without starting state and requires explicit external authorization", () => {
+  it("exposes C2C run help without starting state and requires explicit external authorization", async () => {
     const state = path.join(tmp("cli-real-help"), "state");
-    const help = runCli(["review", "run", "--help"], state);
+    const help = await runCli(["review", "run", "--help"], state);
     expect(help.status, output(help)).toBe(0);
     expect(output(help)).toContain("--reviewed-snapshot");
     expect(output(help)).toContain("--authorize-external-review");
-    const denied = runCli(["review", "run", "--snapshot", "not-read.json", "--model", "test-reviewer", "--state-dir", state, "--reviewed-snapshot", "a".repeat(64)], state);
+    const denied = await runCli(["review", "run", "--snapshot", "not-read.json", "--model", "test-reviewer", "--state-dir", state, "--reviewed-snapshot", "a".repeat(64)], state);
     expect(denied.status).toBe(1);
     expect(output(denied)).toContain("--authorize-external-review");
     expect(fs.existsSync(state)).toBe(false);
-  });
+  }, cliTestBudget(2));
 
-  it("rejects legacy commands before state, global configuration, or network side effects", () => {
+  it("rejects legacy commands before state, global configuration, or network side effects", async () => {
     const workspace = tmp("cli-legacy-workspace");
     makeGitRepo(workspace);
     const helpState = path.join(tmp("cli-help-state-parent"), "state");
-    const help = runCli(["--help"], helpState);
+    const help = await runCli(["--help"], helpState);
     expect(help.status).toBe(0);
     expect(output(help)).toMatch(/^\s+review\s+Approved, single-use snapshot review/m);
     expect(output(help)).not.toMatch(/^\s+(?:serve|start|setup|stop|restart|status|doctor|pair|unpair|logs|workspace|sandbox-allow|update-check|session|record)\b/m);
@@ -124,21 +94,21 @@ describe("review-only CLI security boundary", () => {
     ];
     for (const args of commands) {
       const stateDir = path.join(tmp("cli-legacy-state-parent"), "state");
-      const result = runCli(args, stateDir);
+      const result = await runCli(args, stateDir);
       expect(result.status, `${args.join(" ")} output: ${output(result)}`).toBe(1);
       expect(output(result)).toContain("LEGACY_COMMAND_DISABLED");
       expect(fs.existsSync(stateDir)).toBe(false);
     }
-  });
+  }, cliTestBudget(7));
 
-  it("prepares public, synthetic, or non-sensitive unapproved snapshots outside the reviewed root and inspects their exact digest", () => {
+  it("prepares public, synthetic, or non-sensitive unapproved snapshots outside the reviewed root and inspects their exact digest", async () => {
     const root = tmp("cli-review-root");
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
     for (const dataClass of ["public", "synthetic", "non-sensitive"]) {
       const outputFile = path.join(tmp("cli-review-output"), `${dataClass}.snapshot.json`);
       const stateDir = path.join(tmp("cli-review-state-parent"), "state");
-      const prepared = runCli([
+      const prepared = await runCli([
         "review", "prepare",
         "--workspace", root,
         "--task", `review-${dataClass}`,
@@ -153,20 +123,20 @@ describe("review-only CLI security boundary", () => {
       expect(fs.existsSync(outputFile)).toBe(true);
       expect((JSON.parse(fs.readFileSync(outputFile, "utf8")) as { dataClass: string }).dataClass).toBe(dataClass);
 
-      const inspected = runCli(["review", "inspect", "--snapshot", outputFile], stateDir);
+      const inspected = await runCli(["review", "inspect", "--snapshot", outputFile], stateDir);
       expect(inspected.status, output(inspected)).toBe(0);
       expect((JSON.parse(output(inspected)) as { digest: string; snapshot: { dataClass: string } }).digest).toBe(preparedBody.digest);
       expect((JSON.parse(output(inspected)) as { snapshot: { dataClass: string } }).snapshot.dataClass).toBe(dataClass);
       expect(JSON.parse(output(inspected)).protocolLimits).toEqual({ maxResponses: 32, maxResponseBytes: 16384, maxTotalBytes: 65536 });
     }
-  });
+  }, cliTestBudget(6));
 
-  it("rejects a forbidden data class without creating a snapshot", () => {
+  it("rejects a forbidden data class without creating a snapshot", async () => {
     const root = tmp("cli-forbidden-root");
     makeGitRepo(root);
     const outputFile = path.join(tmp("cli-forbidden-output"), "forbidden.json");
     const stateDir = path.join(tmp("cli-forbidden-state-parent"), "state");
-    const result = runCli([
+    const result = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "forbidden-data",
@@ -178,15 +148,15 @@ describe("review-only CLI security boundary", () => {
     expect(output(result)).toContain("DATA_CLASS_NOT_ALLOWED");
     expect(fs.existsSync(outputFile)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, cliTestBudget(1));
 
-  it("passes an explicit base commit to review prepare", () => {
+  it("passes an explicit base commit to review prepare", async () => {
     const root = tmp("cli-base-review-root");
     makeGitRepo(root);
     const historical = git(root, "rev-parse", "HEAD").trim();
     write(root, "src/index.ts", "export const answer = 43;\n");
     const snapshotFile = path.join(tmp("cli-base-review-output"), "review.json");
-    const result = runCli([
+    const result = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "cli-base-review",
@@ -201,14 +171,14 @@ describe("review-only CLI security boundary", () => {
       baseCommit: historical,
       files: [{ before: "export const answer = 42;\n", after: "export const answer = 43;\n" }],
     });
-  });
+  }, cliTestBudget(1));
 
-  it("creates an unapproved synthetic remote permit with exact persistence and no overwrite", () => {
+  it("creates an unapproved synthetic remote permit with exact persistence and no overwrite", async () => {
     const root = tmp("cli-remote-plan-root");
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
     const snapshotFile = path.join(tmp("cli-remote-plan-snapshot"), "review.json");
-    const prepared = runCli([
+    const prepared = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "remote-plan-review",
@@ -229,7 +199,7 @@ describe("review-only CLI security boundary", () => {
       "--output", permitFile,
     ];
 
-    const planned = runCli(args, stateDir);
+    const planned = await runCli(args, stateDir);
     expect(planned.status, output(planned)).toBe(0);
     const body = JSON.parse(output(planned)) as { permit: string; digest: string; target: typeof remoteTarget; approved: boolean };
     expect(body).toMatchObject({ permit: path.resolve(permitFile), target: remoteTarget, approved: false });
@@ -239,13 +209,13 @@ describe("review-only CLI security boundary", () => {
     expect(remoteReviewDigest(permit)).toBe(body.digest);
     expect(fs.existsSync(stateDir)).toBe(false);
 
-    const repeated = runCli(args, stateDir);
+    const repeated = await runCli(args, stateDir);
     expect(repeated.status).toBe(1);
     expect(fs.readFileSync(permitFile, "utf8")).toBe(permitText);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, cliTestBudget(3));
 
-  it.each(["public", "unclassified"] as const)("rejects %s data from remote-plan before writing a permit", (dataClass) => {
+  it.each(["public", "unclassified"] as const)("rejects %s data from remote-plan before writing a permit", async (dataClass) => {
     const root = tmp(`cli-remote-reject-${dataClass}`);
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
@@ -258,7 +228,7 @@ describe("review-only CLI security boundary", () => {
       "--data-class", dataClass === "unclassified" ? "synthetic" : dataClass,
       "--output", snapshotFile,
     ];
-    const prepared = runCli(prepareArgs, path.join(tmp(`cli-remote-reject-${dataClass}-prepare-state`), "state"));
+    const prepared = await runCli(prepareArgs, path.join(tmp(`cli-remote-reject-${dataClass}-prepare-state`), "state"));
     expect(prepared.status, output(prepared)).toBe(0);
     if (dataClass === "unclassified") {
       const legacy = JSON.parse(fs.readFileSync(snapshotFile, "utf8")) as Record<string, unknown>;
@@ -267,7 +237,7 @@ describe("review-only CLI security boundary", () => {
     }
     const permitFile = path.join(tmp(`cli-remote-reject-${dataClass}-permit`), "permit.json");
     const stateDir = path.join(tmp(`cli-remote-reject-${dataClass}-state-parent`), "state");
-    const result = runCli([
+    const result = await runCli([
       "review", "remote-plan",
       "--snapshot", snapshotFile,
       "--model", remoteTarget.model,
@@ -279,14 +249,14 @@ describe("review-only CLI security boundary", () => {
     expect(output(result)).toContain(dataClass === "public" ? "REMOTE_REVIEW_ATTESTATION_REQUIRED" : "REMOTE_PILOT_SYNTHETIC_ONLY");
     expect(fs.existsSync(permitFile)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, cliTestBudget(2));
 
-  it("rejects a wrong remote permit digest before creating state or opening a listener", () => {
+  it("rejects a wrong remote permit digest before creating state or opening a listener", async () => {
     const root = tmp("cli-remote-approval-root");
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
     const snapshotFile = path.join(tmp("cli-remote-approval-snapshot"), "review.json");
-    const prepared = runCli([
+    const prepared = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "remote-approval-review",
@@ -296,7 +266,7 @@ describe("review-only CLI security boundary", () => {
     ], path.join(tmp("cli-remote-approval-prepare-state"), "state"));
     expect(prepared.status, output(prepared)).toBe(0);
     const permitFile = path.join(tmp("cli-remote-approval-permit"), "permit.json");
-    const planned = runCli([
+    const planned = await runCli([
       "review", "remote-plan",
       "--snapshot", snapshotFile,
       "--model", remoteTarget.model,
@@ -306,7 +276,7 @@ describe("review-only CLI security boundary", () => {
     ], path.join(tmp("cli-remote-approval-plan-state"), "state"));
     expect(planned.status, output(planned)).toBe(0);
     const stateDir = path.join(tmp("cli-remote-approval-state-parent"), "state");
-    const result = runCli([
+    const result = await runCli([
       "review", "serve-remote",
       "--snapshot", snapshotFile,
       "--permit", permitFile,
@@ -318,14 +288,14 @@ describe("review-only CLI security boundary", () => {
     expect(output(result)).toContain("REMOTE_APPROVAL_MISMATCH");
     expect(output(result)).not.toContain("SYNTHETIC_REMOTE_PILOT");
     expect(fs.existsSync(stateDir)).toBe(false);
-  });
+  }, cliTestBudget(3));
 
   it("serves an approved synthetic remote pilot on loopback with the exact resource and permit digest", async () => {
     const root = tmp("cli-remote-serve-root");
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
     const snapshotFile = path.join(tmp("cli-remote-serve-snapshot"), "review.json");
-    const prepared = runCli([
+    const prepared = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "remote-serve-review",
@@ -335,7 +305,7 @@ describe("review-only CLI security boundary", () => {
     ], path.join(tmp("cli-remote-serve-prepare-state"), "state"));
     expect(prepared.status, output(prepared)).toBe(0);
     const permitFile = path.join(tmp("cli-remote-serve-permit"), "permit.json");
-    const planned = runCli([
+    const planned = await runCli([
       "review", "remote-plan",
       "--snapshot", snapshotFile,
       "--model", remoteTarget.model,
@@ -367,14 +337,14 @@ describe("review-only CLI security boundary", () => {
     expect(response).toMatchObject({ mode: "SYNTHETIC_REMOTE_PILOT", resource: remoteTarget.resource, digest: plannedBody.digest, expiresAt: permit.expiresAt });
     expect(response.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
     expect(response.pairingCode).toMatch(/^[A-Z0-9]{4}-[A-Z0-9]{4}$/);
-  });
+  }, cliTestBudget(2, 1));
 
   it("plans and serves an explicitly reviewed non-sensitive snapshot with the bounded review mode", async () => {
     const root = tmp("cli-bounded-review-root");
     makeGitRepo(root);
     write(root, "src/index.ts", "export const answer = 43;\n");
     const snapshotFile = path.join(tmp("cli-bounded-review-snapshot"), "review.json");
-    const prepared = runCli([
+    const prepared = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "bounded-review",
@@ -385,7 +355,7 @@ describe("review-only CLI security boundary", () => {
     expect(prepared.status, output(prepared)).toBe(0);
     const preparedBody = JSON.parse(output(prepared)) as { digest: string };
     const permitFile = path.join(tmp("cli-bounded-review-permit"), "permit.json");
-    const planned = runCli([
+    const planned = await runCli([
       "review", "remote-plan",
       "--snapshot", snapshotFile,
       "--model", remoteTarget.model,
@@ -416,14 +386,14 @@ describe("review-only CLI security boundary", () => {
       expiresAt: number;
     };
     expect(response).toMatchObject({ mode: "BOUNDED_REMOTE_REVIEW", resource: remoteTarget.resource, digest: plannedBody.digest, expiresAt: permit.expiresAt });
-  });
+  }, cliTestBudget(2, 1));
 
-  it("requires a review serve approval and rejects a bad digest before opening state or a listener", () => {
+  it("requires a review serve approval and rejects a bad digest before opening state or a listener", async () => {
     const root = tmp("cli-serve-root");
     makeGitRepo(root);
     const snapshotFile = path.join(tmp("cli-serve-output"), "review.json");
     const prepareState = path.join(tmp("cli-serve-prepare-state-parent"), "state");
-    const prepared = runCli([
+    const prepared = await runCli([
       "review", "prepare",
       "--workspace", root,
       "--task", "serve-review",
@@ -434,13 +404,13 @@ describe("review-only CLI security boundary", () => {
     expect(prepared.status, output(prepared)).toBe(0);
 
     const missingState = path.join(tmp("cli-serve-missing-state-parent"), "state");
-    const missing = runCli(["review", "serve", "--snapshot", snapshotFile, "--state-dir", missingState], missingState);
+    const missing = await runCli(["review", "serve", "--snapshot", snapshotFile, "--state-dir", missingState], missingState);
     expect(missing.status).toBe(1);
     expect(output(missing)).toMatch(/required option '--approval <sha256>' not specified/i);
     expect(fs.existsSync(missingState)).toBe(false);
 
     const badState = path.join(tmp("cli-serve-bad-state-parent"), "state");
-    const bad = runCli([
+    const bad = await runCli([
       "review", "serve",
       "--snapshot", snapshotFile,
       "--approval", "0".repeat(64),
@@ -450,5 +420,5 @@ describe("review-only CLI security boundary", () => {
     expect(output(bad)).toContain("APPROVAL_MISMATCH");
     expect(output(bad)).not.toContain("LOCAL_MOCK_ONLY");
     expect(fs.existsSync(badState)).toBe(false);
-  });
+  }, cliTestBudget(3));
 });

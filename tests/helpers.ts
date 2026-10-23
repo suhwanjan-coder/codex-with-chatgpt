@@ -2,9 +2,27 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { spawnSync } from "node:child_process";
+import { constants } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+
+/** Test-process failures must not turn into empty-output assertion failures. */
+export function childProcessFailure(code: string, start: number, result: {
+  error?: NodeJS.ErrnoException; status?: number | null; signal?: string | null;
+  stdout?: string | Buffer | null; stderr?: string | Buffer | null;
+}): Error {
+  const bytes = (value: string | Buffer | null | undefined) => value == null ? null : Buffer.byteLength(value);
+  const errorCode = result.error?.code;
+  return Object.assign(new Error(code), { childProcess: {
+    classification: errorCode === "ETIMEDOUT" ? "timeout" : result.error ? "spawn-error" : result.signal ? "signal" : "non-zero-exit",
+    durationMs: Math.max(0, Math.round(performance.now() - start)),
+    status: result.status ?? null,
+    signal: result.signal ? Object.hasOwn(constants.signals, result.signal) ? result.signal : "UNKNOWN" : null,
+    errorCode: errorCode && Object.hasOwn(constants.errno, errorCode) ? errorCode : result.error ? "UNKNOWN" : null,
+    stdoutBytes: bytes(result.stdout), stderrBytes: bytes(result.stderr),
+  } });
+}
 
 /**
  * Temp dirs live inside the repo (.tooling/test-tmp) so tests also run in

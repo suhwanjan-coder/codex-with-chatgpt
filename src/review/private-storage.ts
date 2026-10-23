@@ -139,6 +139,12 @@ export function privateStorageFailure(code: string, error: unknown): Error {
   return storageError(code, error instanceof PrivateStorageError ? error.diagnostic : undefined);
 }
 
+/** A bounded diagnostic line for local CLI/runner errors; never include raw causes or output. */
+export function privateStorageDiagnosticLine(error: unknown): string {
+  const diagnostic = error instanceof PrivateStorageError ? error.diagnostic : undefined;
+  return diagnostic ? `C2C_PRIVATE_STORAGE_DIAGNOSTIC ${JSON.stringify(diagnostic)}\n` : "";
+}
+
 function processDiagnostic(start: number, response?: SpawnSyncReturns<string>, error: unknown = response?.error): PrivateStorageDiagnostic {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
   const errorCode = typeof code === "string" && Object.hasOwn(constants.errno, code) ? code : error ? "UNKNOWN" : null;
