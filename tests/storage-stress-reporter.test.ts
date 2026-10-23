@@ -55,7 +55,11 @@ describe("storage stress evidence", () => {
   });
   if (process.platform === "win32") it("runs the actual bounded load helper even when inherited process policy is Restricted", () => {
     const { command, args } = windowsLoadCommand();
-    const env = { ...process.env, PSExecutionPolicyPreference: "Restricted" };
+    const inheritedPolicy = process.env.PSExecutionPolicyPreference;
+    // Windows env names are case-insensitive, but a worker's copied env may hold several casings.
+    const env: NodeJS.ProcessEnv = Object.fromEntries(Object.entries(process.env)
+      .filter(([key]) => key.toLowerCase() !== "psexecutionpolicypreference"));
+    env.PSExecutionPolicyPreference = "Restricted";
     const blockedArgs = args.filter((argument: string) => !["-ExecutionPolicy", "Bypass"].includes(argument));
     const blocked = spawnSync(command, blockedArgs, { env, windowsHide: true, encoding: "utf8", timeout: 15_000 });
     expect(blocked.error).toBeUndefined();
@@ -68,6 +72,6 @@ describe("storage stress evidence", () => {
     expect(allowed.stderr).toBe("");
     expect(performance.now() - start).toBeGreaterThanOrEqual(500);
     expect(fs.readFileSync(args.at(-1)!).subarray(0, 3)).toEqual(Buffer.from([239, 187, 191]));
-    expect(process.env.PSExecutionPolicyPreference).not.toBe("Bypass");
+    expect(process.env.PSExecutionPolicyPreference).toBe(inheritedPolicy);
   }, 35_000);
 });
