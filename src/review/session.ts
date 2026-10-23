@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { parseSnapshot, snapshotDigest, REVIEW_PROTOCOL_LIMITS, type ReviewSnapshot } from "./snapshot.js";
-import { ensurePrivateDirectory, writePrivateNewFile } from "./private-storage.js";
+import { ensurePrivateDirectory, privateStorageFailure, writePrivateNewFile } from "./private-storage.js";
 
 export type ReviewTool = "review_info" | "read_file" | "review_diff" | "review_complete";
 export type ReviewResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -46,7 +46,7 @@ function safeStateDirectory(dir: string, root: string): string {
     current = path.dirname(current);
   }
   if (!fs.existsSync(target)) {
-    try { ensurePrivateDirectory(target); } catch { throw new Error("STATE_DIRECTORY_UNAVAILABLE"); }
+    try { ensurePrivateDirectory(target); } catch (error) { throw privateStorageFailure("STATE_DIRECTORY_UNAVAILABLE", error); }
   }
   if (!fs.lstatSync(target).isDirectory()) throw new Error("STATE_DIRECTORY_UNAVAILABLE");
   if (fs.realpathSync.native(target).toLowerCase() !== target.toLowerCase()) throw new Error("LINKED_STATE_DIRECTORY");
@@ -106,7 +106,7 @@ export class ReviewSession {
     const state = safeStateDirectory(opts.stateDir, this.root);
     refuseLegacyStateArtifacts(state);
     try { this.privateStateDir = ensurePrivateDirectory(path.join(state, ".c2c-review-private")); }
-    catch { throw new Error("PRIVATE_STATE_UNAVAILABLE"); }
+    catch (error) { throw privateStorageFailure("PRIVATE_STATE_UNAVAILABLE", error); }
     this.authStoreFile = path.join(this.privateStateDir, `${this.digest}.auth.json`);
     this.lockFile = path.join(this.privateStateDir, `${createHash("sha256").update(this.root.toLowerCase()).digest("hex")}.lock`);
     let acquiredLock: number | undefined;
@@ -114,7 +114,7 @@ export class ReviewSession {
       writePrivateNewFile(this.lockFile, JSON.stringify({ pid: process.pid, digest: this.digest }));
       acquiredLock = fs.openSync(this.lockFile, "r+");
       fs.fsyncSync(acquiredLock);
-    } catch {
+    } catch (error) {
       if (acquiredLock !== undefined) {
         try {
           const opened = fs.fstatSync(acquiredLock);
@@ -123,7 +123,7 @@ export class ReviewSession {
         } catch { /* Keep an uncertain lock for explicit local inspection. */ }
         try { fs.closeSync(acquiredLock); } catch { /* Preserve the original failure. */ }
       }
-      throw new Error("WORKSPACE_LOCKED_OR_STATE_UNAVAILABLE");
+      throw privateStorageFailure("WORKSPACE_LOCKED_OR_STATE_UNAVAILABLE", error);
     }
     this.lockFd = acquiredLock;
     // Exclusive creation doubles as a durable, single-use approval receipt.
@@ -131,16 +131,16 @@ export class ReviewSession {
     try {
       writePrivateNewFile(this.auditFile, "");
       this.auditFd = fs.openSync(this.auditFile, "a");
-    } catch {
+    } catch (error) {
       try { this.releaseLock(); } catch { /* Preserve the original failure. */ }
-      throw new Error("APPROVAL_USED_OR_AUDIT_UNAVAILABLE");
+      throw privateStorageFailure("APPROVAL_USED_OR_AUDIT_UNAVAILABLE", error);
     }
     try {
       writePrivateNewFile(this.authStoreFile, JSON.stringify({ clients: [], tokens: [] }));
-    } catch {
+    } catch (error) {
       try { fs.closeSync(this.auditFd); } catch { /* Still release the lock. */ }
       try { this.releaseLock(); } catch { /* Preserve the original failure. */ }
-      throw new Error("AUTH_STORE_UNAVAILABLE");
+      throw privateStorageFailure("AUTH_STORE_UNAVAILABLE", error);
     }
     try {
       this.audit("session_start", [], 0, "approved");

@@ -1,5 +1,6 @@
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
 import fs from "node:fs";
+import { constants } from "node:os";
 import path from "node:path";
 
 const WINDOWS_POWERSHELL = "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
@@ -7,6 +8,20 @@ const POWERSHELL_TIMEOUT_MS = 5_000;
 const POWERSHELL_MAX_BUFFER = 16 * 1024;
 
 type PrivateStorageRunner = (input: string) => SpawnSyncReturns<string>;
+
+export interface PrivateStorageDiagnostic {
+  classification: "timeout" | "spawn-error" | "signal" | "non-zero-exit" | "bad-json" | "invalid-response" | "output-too-large" | "unavailable-code" | "exists-code";
+  durationMs: number;
+  status: number | null;
+  signal: string | null;
+  errorCode: string | null;
+  stdoutBytes: number | null;
+  stderrBytes: number | null;
+}
+
+class PrivateStorageError extends Error {
+  constructor(code: string, readonly diagnostic?: Readonly<PrivateStorageDiagnostic>) { super(code); }
+}
 
 export interface PrivateAclEvaluation {
   daclTrusted: boolean;
@@ -114,7 +129,28 @@ try {
   throw 'INVALID_ACTION'
 } catch { Emit $false 'UNAVAILABLE'; exit 1 }`;
 
-function storageError(code: string): Error { return new Error(code); }
+function storageError(code: string, diagnostic?: PrivateStorageDiagnostic): Error {
+  return new PrivateStorageError(code, diagnostic && Object.freeze(diagnostic));
+}
+
+/** Carry only our sanitized metadata across error boundaries, never a raw process/fs error. */
+export function privateStorageFailure(code: string, error: unknown): Error {
+  return storageError(code, error instanceof PrivateStorageError ? error.diagnostic : undefined);
+}
+
+function processDiagnostic(start: number, response?: SpawnSyncReturns<string>, error: unknown = response?.error): PrivateStorageDiagnostic {
+  const code = error && typeof error === "object" && "code" in error ? error.code : undefined;
+  const errorCode = typeof code === "string" && Object.hasOwn(constants.errno, code) ? code : error ? "UNKNOWN" : null;
+  const signal = response?.signal;
+  const bytes = (value: unknown): number | null => typeof value === "string" ? Buffer.byteLength(value, "utf8") : Buffer.isBuffer(value) ? value.length : null;
+  return {
+    classification: errorCode === "ETIMEDOUT" ? "timeout" : error ? "spawn-error" : signal ? "signal" : "non-zero-exit",
+    durationMs: Math.min(Number.MAX_SAFE_INTEGER, Math.max(0, Math.round(performance.now() - start))),
+    status: Number.isSafeInteger(response?.status) ? response!.status : null,
+    signal: typeof signal === "string" ? Object.hasOwn(constants.signals, signal) ? signal : "UNKNOWN" : null,
+    errorCode, stdoutBytes: bytes(response?.stdout), stderrBytes: bytes(response?.stderr),
+  };
+}
 
 function normalizeTarget(target: string): string {
   if (typeof target !== "string" || target.length === 0 || target.length > 30_000) throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
@@ -143,32 +179,43 @@ function runPowerShell(input: string): SpawnSyncReturns<string> {
   });
 }
 
-function runWindowsRequest(request: Record<string, string>, runner: PrivateStorageRunner): void {
+function windowsResponse(request: Record<string, string>, runner: PrivateStorageRunner): { parsed: unknown; diagnostic: PrivateStorageDiagnostic } {
+  const start = performance.now();
   let response: SpawnSyncReturns<string>;
-  try { response = runner(JSON.stringify(request)); } catch { throw storageError("PRIVATE_STORAGE_UNAVAILABLE"); }
-  if (response.error || response.signal || response.status !== 0 || typeof response.stdout !== "string" || response.stdout.length > POWERSHELL_MAX_BUFFER) throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
+  try { response = runner(JSON.stringify(request)); }
+  catch (error) {
+    const diagnostic = processDiagnostic(start, undefined, error);
+    throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic, classification: diagnostic.errorCode === "ETIMEDOUT" ? "timeout" : "spawn-error" });
+  }
+  const diagnostic = processDiagnostic(start, response);
+  if (response.error || response.signal || response.status !== 0) throw storageError("PRIVATE_STORAGE_UNAVAILABLE", diagnostic);
+  if (typeof response.stdout !== "string") throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic, classification: "invalid-response" });
+  if (response.stdout.length > POWERSHELL_MAX_BUFFER) throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic, classification: "output-too-large" });
   let parsed: unknown;
-  try { parsed = JSON.parse(response.stdout.trim()); } catch { throw storageError("PRIVATE_STORAGE_UNAVAILABLE"); }
+  try { parsed = JSON.parse(response.stdout.trim()); }
+  catch { throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic, classification: "bad-json" }); }
+  return { parsed, diagnostic };
+}
+
+function runWindowsRequest(request: Record<string, string>, runner: PrivateStorageRunner): void {
+  const { parsed, diagnostic } = windowsResponse(request, runner);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length !== 2 ||
       (parsed as { ok?: unknown }).ok !== true || (parsed as { code?: unknown }).code !== "OK") {
-    if ((parsed as { code?: unknown } | null)?.code === "EXISTS") throw storageError("PRIVATE_STORAGE_EXISTS");
-    throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
+    if ((parsed as { code?: unknown } | null)?.code === "EXISTS") throw storageError("PRIVATE_STORAGE_EXISTS", { ...diagnostic, classification: "exists-code" });
+    throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic,
+      classification: (parsed as { code?: unknown } | null)?.code === "UNAVAILABLE" ? "unavailable-code" : "invalid-response" });
   }
 }
 
 /** Test-only, no-mutation evaluation of the exact Windows reuse predicate against an in-memory SDDL descriptor. */
 export function evaluatePrivateAclSddlForTests(sddl: string, runner: PrivateStorageRunner = runPowerShell): PrivateAclEvaluation {
   if (process.platform !== "win32" || typeof sddl !== "string" || sddl.length === 0 || sddl.length > 16 * 1024) throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
-  let response: SpawnSyncReturns<string>;
-  try { response = runner(JSON.stringify({ action: "test-acl-sddl", sddl })); } catch { throw storageError("PRIVATE_STORAGE_UNAVAILABLE"); }
-  if (response.error || response.signal || response.status !== 0 || typeof response.stdout !== "string" || response.stdout.length > POWERSHELL_MAX_BUFFER) throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
-  let parsed: unknown;
-  try { parsed = JSON.parse(response.stdout.trim()); } catch { throw storageError("PRIVATE_STORAGE_UNAVAILABLE"); }
+  const { parsed, diagnostic } = windowsResponse({ action: "test-acl-sddl", sddl }, runner);
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || Object.keys(parsed).length !== 5 ||
       (parsed as { ok?: unknown }).ok !== true || (parsed as { code?: unknown }).code !== "OK" ||
       typeof (parsed as { daclTrusted?: unknown }).daclTrusted !== "boolean" ||
       typeof (parsed as { ownerTrusted?: unknown }).ownerTrusted !== "boolean" ||
-      typeof (parsed as { trusted?: unknown }).trusted !== "boolean") throw storageError("PRIVATE_STORAGE_UNAVAILABLE");
+      typeof (parsed as { trusted?: unknown }).trusted !== "boolean") throw storageError("PRIVATE_STORAGE_UNAVAILABLE", { ...diagnostic, classification: "invalid-response" });
   const evaluation = parsed as PrivateAclEvaluation & { ok: true; code: "OK" };
   return {
     daclTrusted: evaluation.daclTrusted,

@@ -18,7 +18,7 @@ import { Logger, nullLogger } from "../logger/index.js";
 import { DEFAULT_HOST, DEFAULT_PORT } from "../config/paths.js";
 import { SERVICE_NAME, VERSION } from "../version.js";
 import { writeRuntimeState, clearRuntimeState, type RuntimeState } from "./runtime.js";
-import { verifyPrivateFile, writePrivateNewFile } from "../review/private-storage.js";
+import { privateStorageFailure, verifyPrivateFile, writePrivateNewFile } from "../review/private-storage.js";
 
 export interface BridgeOptions {
   workspaceRoot: string;
@@ -112,8 +112,8 @@ export async function startBridge(opts: BridgeOptions): Promise<Bridge> {
     try {
       writePrivateNewFile(required, JSON.stringify({ clients: [], tokens: [] }));
     } catch (error) {
-      if (!(error instanceof Error) || error.message !== "PRIVATE_STORAGE_EXISTS") throw new Error("REVIEW_AUTH_STORE_UNAVAILABLE");
-      try { verifyPrivateFile(required); } catch { throw new Error("REVIEW_AUTH_STORE_UNAVAILABLE"); }
+      if (!(error instanceof Error) || error.message !== "PRIVATE_STORAGE_EXISTS") throw privateStorageFailure("REVIEW_AUTH_STORE_UNAVAILABLE", error);
+      try { verifyPrivateFile(required); } catch (error) { throw privateStorageFailure("REVIEW_AUTH_STORE_UNAVAILABLE", error); }
     }
     authStoreFile = required;
   }
