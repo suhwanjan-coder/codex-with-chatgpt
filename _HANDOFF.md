@@ -24,6 +24,8 @@
   `$env:CI='true'; corepack pnpm exec vitest run` 兩次，期望 490 項全過 0 跳過；過了再問阿志 push 6 個 commit，並更新 manifest。
 - 若閒置下仍失敗：先看是否仍是逾時；非逾時才視為真回歸，對照 vitest-final-*.json（_working/codex-20261023/）。
 
+- 2026/10/24 00:20 補驗完成：HEAD 07ffed7 兩次完整測試皆 490/490 過、0 失敗、0 跳過（CPU 約 51–59%，其他專案仍有 10 個 codex）。先前三次失敗確認為外部負載逾時。待阿志決定是否 push 7 個 commit。
+
 ### 不要重試
 - 在 bash heredoc／sed 寫含 Windows 路徑的 TS 探測檔：反斜線被吃（ENOENT）。用 Write 工具。
 - 交辦時寫「每個測試 <10 秒」會讓 worker 設過緊的自訂 timeout。
