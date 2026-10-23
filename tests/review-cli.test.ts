@@ -91,7 +91,7 @@ describe("review-only CLI security boundary", () => {
     if (location === "existing output") expect(fs.readFileSync(outputFile, "utf8")).toBe("preserve-existing-output");
     else expect(fs.existsSync(outputFile)).toBe(false);
     expect(fs.existsSync(stateDir)).toBe(false);
-  }, 9_000);
+  });
 
   it("exposes C2C run help without starting state and requires explicit external authorization", () => {
     const state = path.join(tmp("cli-real-help"), "state");

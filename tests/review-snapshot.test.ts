@@ -33,7 +33,7 @@ describe("review snapshots", () => {
     expect(exact.files.reduce((bytes, file) => bytes + Buffer.byteLength(file.before!) + Buffer.byteLength(file.after!), 0)).toBe(512 * 1024);
     expect(() => createSnapshot(root, { taskId: "aggregate-over", paths })).toThrow("SNAPSHOT_SCHEMA");
     expect(() => parseSnapshot({ ...exact, files: [...exact.files, { path: "extra.txt", before: null, after: "x" }] })).toThrow("SNAPSHOT_SCHEMA");
-  }, 9_000);
+  });
 
   it("applies custom ignore rules to snapshot preparation without allowing negation of static denies", () => {
     const root = repo();
@@ -42,7 +42,7 @@ describe("review snapshots", () => {
     expect(() => createSnapshot(root, { taskId: "custom-ignore", paths: ["hello.txt"] })).toThrow("SNAPSHOT_PATH");
     expect(() => createSnapshot(root, { taskId: "static-ignore", paths: [".env.example"] })).toThrow("SNAPSHOT_PATH");
     expect(createSnapshot(root, { taskId: "positive-control", paths: ["src/index.ts"] }).files).toHaveLength(1);
-  }, 9_000);
+  });
 
   it("binds every approval field and fixed protocol budgets into the snapshot digest", () => {
     const root = repo();
