@@ -1,5 +1,7 @@
 # Security Model
 
+> Historical upstream security model, retained for context; the claims below are not current guarantees for this fork. Current review is limited to an approved immutable snapshot, scopes `workspace.read` / `git.read`, no refresh grant, and a dedicated external state directory with Windows private-storage checks. Snapshot preparation rejects `.env.example` too. Read [the current operating guide](HARDENED_REVIEW.md) for limits and cleanup; read-only access still discloses approved content.
+
 ## Trust boundaries
 
 1. **Workspace root** is the smallest authorization boundary. One bridge serves

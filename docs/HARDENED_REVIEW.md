@@ -6,7 +6,7 @@
 - AI Council 只處理重大取捨；它不接管 C2C 的計畫、執行或驗證。
 - 目標是讓為 Achi 客製的 C2C 在安全邊界內比 upstream 更實用：主動找出壞掉路徑與值得做的改善，並以實證保留改善。新需求必須併入整體設計，不能以臨時 patch 疊加。
 - Ordinary Codex 使用本機工具不代表模型本身純本機；snapshot 分類限制仍完整適用。
-- 現行 local C2C workflow 支援明確分類的 `public` 與經審閱的 `non-sensitive`；`synthetic` 僅保留為 legacy 證據。未分類 snapshot 只能 local-only。
+- 現行 local C2C workflow 支援明確分類的 `public` 與經審閱的 `non-sensitive`；`synthetic` 仍可用於獨立合成測試／歷史流程，但 `review run` 不接受此類別。未分類 snapshot 只能 local-only。
 - C2C 的現行入口是使用者明確的自然語言意圖（或 `$c2c` 捷徑）；操作者（Codex）擁有全部步驟，從任務定義、snapshot、執行、修改、測試到驗證與清理。詳見[使用說明](C2C_USAGE.md)。
 - 真實 external permit 需 exact snapshot 的 `reviewedSnapshotDigest` 與 destination-bound approval；每批只對 exact scope 取得一次 gate。snapshot 消耗後必須建立 fresh snapshot/permit；retry 僅限事前批准的 bounded scope。
 - 本專案的 skill 名稱是 `c2c`；`skill/agents/openai.yaml` 的 `allow_implicit_invocation` 為 `true`，只允許 skill 依明確自然語言意圖被發現，不會因相關性自動啟動。[全域入口 source](../skill/global-entry/SKILL.md) 仍只負責跨專案路由；普通 coding 不會隱式啟動 C2C。
@@ -21,9 +21,9 @@
 ## 基線與不可做的事
 
 - 上游固定基線：`b1481c0`。普通 workflow 不可自動 update、pull、stash、改 Codex config 或未核准的全域設定，也不可自行建立外部 connector/tunnel；外部 transport 僅在明確核准的批次內由 `review run` 執行，synthetic pilot 為獨立歷史路徑。
-- package manager 已 pin 為 `11.19.0`，SDK 為 `1.30.0`。offline-cache install 的 trust-lockfile 只停用線上 metadata check，不是新鮮 supply-chain audit。
+- package manager 已 pin 為 `11.19.0`，SDK 為 `1.30.0`。先前 offline-cache install 的 trust-lockfile 說明屬歷史安裝紀錄，不是目前設定；目前依 `pnpm-workspace.yaml` 的 `esbuild` 建置允許設定安裝（`.npmrc` 的 `store-dir` 經 2026-10-23 實測不被 pnpm 11.19.0 採用），見[跨機接手](C2C_CROSS_MACHINE.md)。
 - 全域入口只在使用者明確要求本次任務使用 C2C 時路由；不要使用或匯入舊 `setup`、`start`、`doctor`、`update`、`sandbox-allow` helpers。所有 legacy tools 不屬於此流程，且在 action 前拒絕。
-- snapshot 在 prepare 時固定 Git HEAD 與目前安全文字，保存 before/after；MCP 後續不重讀 live repository。
+- snapshot 在 prepare 時以 Git HEAD 為預設 base；可用 `--base <完整 commit OID>` 指定歷史 commit，before 來自該 base、after 來自目前安全文字。MCP 後續不重讀 live repository。
 
 ## 目前狀態
 
@@ -38,7 +38,7 @@
 - 【歷史證據】首次真實 C2C `trial-yqNyrz` 已 OAuth connected，但在 prompt 前 2 分鐘 idle 到期；cleanup 為 `CLOSED`、token 0、plugin removed。此失敗保留。
 - 【已驗】第二次 `trial-lMTpbx` 以同一 6 個 synthetic files、`gpt-5.6-sol` High，在未變更的 15 分鐘 TTL 內完成 5 分鐘 idle；ChatGPT 實際完成 13 個資料呼叫（1 info、6 diff、6 read），只讀 6 個 approved paths，找出 3 個已知缺陷且 0 誤報。Luna 實際修正前 3 個測試 exit 1、修正後 exit 0，且只改 3 個 source files。證據：原始 ChatGPT 對話由維護者私下保留，不隨公開版本發布；`_working/C2C_ADVISOR_2026-08-30.md`。
 - 【已驗】兩次 trial 均 cleanup 至 `CLOSED`、token 0、cloudflared 0、runner 0；兩個 public URL 均 HTTP 530、temporary plugin 均已刪除、Developer Mode 為 OFF，所有 G7 `g7n` 帳號不存在。audit JSON response bytes 為 14,478，非全部 network bytes 或 quota。
-- G7 通過只表示此列本機 Windows 驗收完成，不是一般 repository 的安全認證；public real repositories 仍須 scoped data authorization 與 capability expansion，病人／院內機密／憑證不得外傳。
+- G7 通過只表示此列本機 Windows 驗收完成，不是一般 repository 的安全認證；目前 `review run` 已支援 public／non-sensitive real repositories，但仍須 scoped data authorization 與目的地綁定核准，病人／院內機密／憑證不得外傳。
 - 本文件、gate 狀態與 trial evidence 須由 Main/Sol 各自獨立核對；本文件不取代真實使用者核准。
 
 ### 啟動約定
@@ -88,14 +88,14 @@ node .\bin\c2c.js review prepare `
   --output "<SNAPSHOT_FILE_OUTSIDE_REVIEW_REPO>"
 ```
 
-`--data-class` 只能是 `public` 或 `synthetic`。`--output` 必須在 review repo 外，prepare 不授予任何存取權，也不覆蓋既有 snapshot。指令輸出會給 snapshot path、SHA-256 digest、檔案清單、期限與 `approved:false`。
+`--data-class` 必填，可為 `public`、`non-sensitive` 或 `synthetic`；這個 CLI 不會產生未分類 snapshot。`--output` 必須在 review repo 外，prepare 不授予任何存取權，也不覆蓋既有 snapshot。指令輸出會給 snapshot path、SHA-256 digest、檔案清單、期限與 `approved:false`。
 
 ```powershell
 node .\bin\c2c.js review inspect `
   --snapshot "<SNAPSHOT_FILE>"
 ```
 
-逐一核對輸出的 task、root、HEAD、每個檔名與完整 before/after、bytes、期限及 limits。任何新增或不明內容都不得進入 gate。
+逐一核對輸出的 `taskId`、root、`baseCommit`、每個檔名與完整 before/after、期限及 limits，並按 UTF-8 計算內容位元組數；未指定 `--base` 時，`baseCommit` 為 prepare 當下的 HEAD；指定時以該 commit 為準。任何新增或不明內容都不得進入 gate。
 
 ```powershell
 node .\bin\c2c.js review serve `
@@ -121,7 +121,7 @@ node .\bin\c2c.js review remote-plan `
   --output "<REMOTE_PERMIT_FILE_OUTSIDE_REVIEW_REPO>"
 ```
 
-只有 `dataClass: synthetic` snapshot 可建立 permit。輸出檔以 exclusive create 寫入 review repo 外，輸出 permit path、remote permit SHA-256、model/resource/redirect target 與 `approved:false`。`resource` 必須是 permit 中的精確 public resource；不要自行改 host、path、redirect URI 或 digest。
+本例使用 `dataClass: synthetic`，不得帶 `--reviewed-snapshot`。`public` 或 `non-sensitive` 也可建立 permit，但必須加上 `--reviewed-snapshot <精確 snapshot SHA-256>`；未分類 snapshot 不可建立 remote permit。輸出檔以 exclusive create 寫入 review repo 外，輸出 permit path、remote permit SHA-256、model/resource/redirect target 與 `approved:false`。`resource` 必須是 permit 中的精確 public resource；不要自行改 host、path、redirect URI 或 digest。
 
 ### Synthetic remote pilot：合併核准後才 serve
 
@@ -134,7 +134,7 @@ node .\bin\c2c.js review serve-remote `
   --port "<LOOPBACK_PORT>"
 ```
 
-`--port` 可省略；指定時只供 `127.0.0.1` listener 使用，讓外部 tunnel wrapper 自己管理轉送。CLI 會先讀取並驗證 snapshot、permit 與 remote permit digest，之後才建立 local review state 並傳入 `{ snapshot, permit, approvalDigest }`；不呼叫 `tunnel.start`。成功輸出 `SYNTHETIC_REMOTE_PILOT`、local URL、exact `resource`、permit digest、OAuth pairing code 與期限；此輸出本身不等同 ChatGPT 實際連線，實際試跑證據見「目前狀態」。
+`--port` 可省略（預設優先使用 48765，衝突時改用系統分配的 port）；可指定 0–65535，0 表示由系統分配。只供 `127.0.0.1` listener 使用，讓外部 tunnel wrapper 自己管理轉送，必須以輸出的實際 port 為準。CLI 會先讀取並驗證 snapshot、permit 與 remote permit digest，之後才建立 local review state 並傳入 `{ snapshot, permit, approvalDigest }`；不呼叫 `tunnel.start`。synthetic 成功輸出 `SYNTHETIC_REMOTE_PILOT`，public／non-sensitive 則為 `BOUNDED_REMOTE_REVIEW`，並附 local URL、exact `resource`、permit digest、OAuth pairing code 與期限；此輸出本身不等同 ChatGPT 實際連線，實際試跑證據見「目前狀態」。
 
 ## 一次合併核准 gate
 
@@ -154,7 +154,7 @@ node .\bin\c2c.js review serve-remote `
 
 `--approval` digest 是 binding receipt，不是 human consent 的證明。synthetic test code 可以產生 digest 並供測試傳入；真實使用者流程不可自行計算後自我核准。task、scope、provider、model、任何新 content、limits、round 或 destination 改變，都必須重新 prepare 並取得新的合併核准。
 
-上表適用 local `serve`。remote pilot 另有 snapshot digest 與 remote permit digest 兩層 binding；permit digest 必須和 model、resource、redirect URI、6 個 synthetic files、transport、期限與 closure 行為一起交給真實使用者作一次合併核准。命令列的 `--authorize-external-trial` 只代表 operator attestation，任何 flag 都不是 consent 證明；在核准前不得鼓勵或指示 copy-run `run-c2c-pilot.mjs`。
+上表適用 local `serve`，其 port 由系統分配；`serve-remote` 的 idle 同樣預設 2 分鐘。`review run` 與 synthetic runner 使用 5 分鐘 idle；`review run` 啟動時要求 snapshot 至少還有 5 分鐘有效期，期限仍從 prepare 算起，不因啟動而延長。remote pilot 另有 snapshot digest 與 remote permit digest 兩層 binding；permit digest 必須和 model、resource、redirect URI、6 個 synthetic files、transport、期限與 closure 行為一起交給真實使用者作一次合併核准。命令列的 `--authorize-external-trial` 只代表 operator attestation，任何 flag 都不是 consent 證明；在核准前不得鼓勵或指示 copy-run `run-c2c-pilot.mjs`。
 
 ## 連線、工具與收尾
 
@@ -162,18 +162,18 @@ node .\bin\c2c.js review serve-remote `
 - local `serve` 只允許 `workspace.read`、`git.read` 與四個 snapshot tools：`review_info`、`read_file`、`review_diff`、`review_complete`。不提供 search、live git status/diff、project metadata 或 execution summary。
 - `serve-remote` 的 remote pilot 只暴露 3 個 read tools：`review_info`、`read_file`、`review_diff`，不暴露 `review_complete`；remote resource、OAuth metadata 與 redirect URI 必須和 permit 完全相符。
 - review 只讀批准 snapshot；完成、TTL、idle、call/output budget 或 audit failure 都會關閉 session。完成時先停止資料服務，再撤銷 token、關 listener，並確認 port closure、token revocation 與 metadata-only audit。
-- remote pilot 用 stdin 輸入 `stop`、輸入串流 EOF，或等待 TTL／idle 關閉；EOF 在核准前後都會觸發一次收尾。停止後必須實際驗證 process／port close、token revocation 與 metadata-only audit，不能只看 CLI 輸出。
+- `review run` 與 `run-c2c-pilot.mjs` 用 stdin 輸入 `stop`、輸入串流 EOF，或等待 TTL／idle 關閉；EOF 在核准前後都會觸發一次收尾。直接執行 `review serve`／`serve-remote` 不處理 stdin `stop` 或 EOF；使用 Ctrl+C（SIGINT）／SIGTERM，或由期限與預算觸發關閉。停止後必須實際驗證 process／port close、token revocation 與 metadata-only audit，不能只看 CLI 輸出。
 - model toolcall 的完整 JSON-RPC body cap 包含 request ID 與 error receipt；若連 error body 也無法 fit，回 `204` 空 body 並關閉 session，不得 silent retry。
 - SDK `initialize`、`ping`、`tools/list` 的 protocol events 與 review tool-call counts 分開 audit、分開呈現，不得混算。
 - `inspect` 與 `review_info` 必須暴露 digest 綁定的 protocol constants；不一致即停止，不重試。
-- audit 只記 session hash、request ID、tool、approved paths、bytes、時間、結果與分開的 protocol events/tool-call counts；不記 token、搜尋內容或原始碼。
+- audit 記錄 session hash、request ID、tool、approved paths、bytes、時間、結果與分開的 protocol events/tool-call counts；remote approval event 另記 resource、redirect URI、model 與 permit digest，不記 token、搜尋內容或原始碼。
 - 不明 send/response 結果先 inspect audit、process、port 與 session evidence；不可直接 retry 或自動重啟。
 
 ## 崩潰與目前限制
 
 - crash 後出現 stale lock 必須先做本機 inspection；不可盲刪 lock，也不可改用另一個 state dir 逃避 single-use lock。無法判明狀態就 No-Go。
 - file symlink、other reparse、8.3 alias、long path 與跨帳號 ACL 的 native evidence 已納入通過的 G7。此範圍不防管理員或已被入侵的建立者，也不把 scanner 替代為資料分類或授權判斷。
-- 已完成的 remote synthetic C2C 僅涵蓋核准的一輪與六個 synthetic files。public real repositories 仍須新的 action-time scoped data authorization 與 capability expansion；不得使用病人／院內機密／憑證。
+- 已完成的 remote synthetic C2C 僅涵蓋核准的一輪與六個 synthetic files。目前 public／non-sensitive real repositories 可使用 `review run`，仍須新的 action-time scoped data authorization 與目的地綁定核准；不得使用病人／院內機密／憑證。
 
 ## Synthetic trial：shortcomings、修正、score 與適用性
 
@@ -184,6 +184,8 @@ node .\bin\c2c.js review serve-remote `
 【已驗】`trial-lMTpbx` 工程分數為連線 1、讀取 2、找錯 2、修正驗證 2、收尾 2，合計 9/10；連線扣分是曾需 manual repair。安全、授權或稽核失敗不得以高總分放行。分數只說明這一輪合成資料試跑，不是整體 real-repository certification 或 efficiency/quota savings；擴大到其他 repository 仍需獨立核准，不適用病人／院內資料、未知來源資料或未經 gate 的永久 connector。
 
 ## G7 嚴格驗收
+
+2026-10-23 補註：下列 260-test G7 pass 是 2026-08-30 的歷史紀錄，不代表目前 checkout 已重跑 G7。一般 build／test 與本次稽核見[文件稽核](DOCS_AUDIT_2026-10-23.md)。Windows 無 pnpm PATH 時用 `corepack pnpm` 取代下列 `pnpm`，非互動執行先設 `$env:CI='true'`。
 
 先以 `pnpm test:g7:preflight` 或 `node scripts/g7-preflight.mjs` 檢查執行前提。預檢不安裝或啟動VM、不變更系統權限；只使用本機合成檔案並確認清理。exit0不是G7通過，exit2表示必要能力不足／不明，exit1表示預檢非預期錯誤。本機Core/Home版不支援Windows Sandbox，見 `G7_WINDOWS_ACCEPTANCE.md` 的主機紀錄與官方來源。
 

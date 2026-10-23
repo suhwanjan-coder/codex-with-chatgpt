@@ -1,5 +1,7 @@
 # Architecture
 
+> Historical upstream architecture, retained for context; it is not the architecture contract for this hardened fork. Current review uses an approved fixed snapshot, four local tools or three remote read tools, no refresh grant, and no CLI `--json` option. Legacy daemon/repair commands and bridge-managed tunnel startup are disabled. See [the current operating guide](HARDENED_REVIEW.md).
+
 ```
              ┌───────────────────────────┐
              │    ChatGPT Web / Sol      │

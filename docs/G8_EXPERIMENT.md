@@ -2,7 +2,7 @@
 
 ## 目的與前置註冊
 
-本文件下方的歷史正式實驗設計保持原樣，不事後改寫樣本數或驗收標準。另一次已核准的十案公開 repository 批次已完成真實 ChatGPT 讀取、撤權與內容對照，實用性 8/10，詳見[真實使用報告](C2C_REAL_ACCEPTANCE.md)。完整端到端耗時與返工比較仍未驗收，額度未知；不得把它冒充下方正式設計已完成。
+本文件下方的歷史正式實驗設計保持原樣，不事後改寫樣本數或驗收標準。另一次已核准的十案公開 repository 批次已完成真實 ChatGPT 讀取、撤權與內容對照，完整端到端耗時與返工補量測也已驗收，個人按需實用性更新為 7/10，詳見[真實使用報告](C2C_REAL_ACCEPTANCE.md)。淨額度效益仍未知；不得把它冒充下方正式設計已完成。
 
 ## 先行工程試跑：三案例與可用度
 
@@ -118,5 +118,7 @@ rubric_total,stop_reason,evidence_paths,notes
 | quota by provider |  |  |  |  |
 
 ## 未來外部試用 gate【預註冊】
+
+2026-10-23 補註：下方「現在嚴格 No-Go」保留的是當時正式 G8 設計的授權狀態，不代表目前按需 C2C 已停用，也不授權新的外部試用；目前流程見[使用說明](C2C_USAGE.md)。
 
 【預註冊】現在嚴格 No-Go。若未來提出 external trial，必須另批一個明確 approval batch，且在任何 send 前完成並留證：connector endpoint、資料分類與 data controls 已審核；revocation 已實測；scope、destination、provider/model、task/content、limits 與 round 都在同一 action-time gate 內。外部試用不得沿用本機 local-test 的核准或假設。

@@ -1,5 +1,7 @@
 # Prospective Full-Route Measurement
 
+> 2026-10-23 documentation note: this is the completed 2026-08-31 measurement protocol and record. The manifest, `aggregate/` references and `_working/` evidence below are maintainer-local artifacts, not files shipped in this checkout or instructions to rerun the closed batch. Numeric results are preserved; see [the documentation audit](DOCS_AUDIT_2026-10-23.md) for current checks.
+
 Status: all20 accepted prospective clocks and independent aggregate sign-off
 are complete; see aggregate/FINAL_RECONCILIATION.md. Human authorized the batch with
 "核准進行,do it". Receipt: `_working/measurement-batch-2026-08-31/AUTHORIZATION.md`.

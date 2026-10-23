@@ -11,9 +11,11 @@ application data. This recipe is project-local, not a global installation.
 2. Preserve the original developer-mode setting. Enable it only for the approved
    connector work; do not alter CSP, MFA, other plugins, or account security.
 3. Prepare a fresh reviewed snapshot and use a short dedicated state root outside
-   the reviewed repository, for example `_working/c2c-rNN-<digest-prefix>`.
+   the reviewed repository, for example `<ABSOLUTE_TASK_ROOT>/c2c-rNN-<digest-prefix>`
+   with TASK_ROOT outside that repository. Its own `_working/` is still inside it.
 4. Start `review run`, verify its emitted resource and scope, then send the exact
-   approved permit digest through stdin. No data is served before that step.
+   line `approve <permitDigest>` through stdin (the bare digest is not accepted).
+   No data is served before that step.
 
 ## Connect And Review
 
